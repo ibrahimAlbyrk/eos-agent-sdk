@@ -119,7 +119,7 @@ impl WorkflowTool {
         let task = runs.0.lock().unwrap_or_else(PoisonError::into_inner).get(run_id).cloned()?;
         (task.status() == TaskStatus::Running).then(|| {
             format!(
-                "Workflow {run_id} is still running (task {}). Stop it first with TaskStop({{taskId: \"{}\"}}) before \
+                "Workflow {run_id} is still running (task {}). Stop it first with TaskStop({{task_id: \"{}\"}}) before \
                  resuming.",
                 task.id, task.id
             )

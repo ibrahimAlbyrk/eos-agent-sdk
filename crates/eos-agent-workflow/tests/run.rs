@@ -636,3 +636,24 @@ async fn hundred_runs_footprint() {
     );
     std::fs::remove_dir_all(&s.root).ok();
 }
+
+/// Resuming a run that still runs is refused with how to stop it, in the
+/// key TaskStop's schema takes.
+#[tokio::test]
+async fn resuming_a_running_run_names_task_stops_own_key() {
+    let s = setup();
+    let script = "export const meta = {name: 'wait', description: 'Wait'}\nreturn await agent('slow: wait')";
+    let (launch, _) = s.call(json!({"script": script})).await;
+    let id = run_id(&launch);
+    let task_id = launch.lines().next().and_then(|l| l.rsplit(' ').next()).expect("task id").to_owned();
+    let (out, err) = s.call(json!({"script": script, "resumeFromRunId": id})).await;
+    assert!(err, "{out}");
+    assert!(
+        out.contains(&format!("Stop it first with TaskStop({{task_id: \"{task_id}\"}}) before resuming.")),
+        "{out}"
+    );
+    if let Some(task) = s.ext.get::<BackgroundTasks>().and_then(|t| t.get(&task_id)) {
+        task.stop().await;
+    }
+    std::fs::remove_dir_all(&s.root).ok();
+}

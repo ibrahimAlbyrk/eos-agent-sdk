@@ -1,0 +1,6 @@
+/target
+# Local research notes.
+/research
+# Captured API traffic holds personal context.
+/fixtures/captured
+.DS_Store

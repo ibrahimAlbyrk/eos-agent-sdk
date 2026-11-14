@@ -1,0 +1,24 @@
+[package]
+name = "eos-agent-core"
+description = "The agent loop and the ports it runs on. No I/O, no runtime."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-types.workspace = true
+bytes.workspace = true
+fastrand.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "eos-agent-tools-session"
+description = "Claude Code's tools that act on the agent's own session: todos, tasks, tool search, structured output and questions to the user."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

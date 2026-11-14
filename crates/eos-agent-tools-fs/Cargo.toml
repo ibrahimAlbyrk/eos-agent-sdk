@@ -1,0 +1,30 @@
+[package]
+name = "eos-agent-tools-fs"
+description = "Claude Code's file tools: Read, Write, Edit, NotebookEdit, Glob and Grep."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-types.workspace = true
+base64.workspace = true
+bytes.workspace = true
+globset.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
+ignore.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

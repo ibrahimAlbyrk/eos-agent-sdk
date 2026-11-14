@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "message": {
+      "anyOf": [
+        {
+          "description": "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
+          "type": "string"
+        },
+        {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "shutdown_request",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approve": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "request_id": {
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\n\\r]*$"
+                    },
+                    {
+                      "pattern": "^[\\s\\S]{0,300}$"
+                    }
+                  ],
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": {
+                  "const": "shutdown_response",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "request_id",
+                "approve"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approve": {
+                  "type": "boolean"
+                },
+                "feedback": {
+                  "type": "string"
+                },
+                "request_id": {
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\n\\r]*$"
+                    },
+                    {
+                      "pattern": "^[\\s\\S]{0,300}$"
+                    }
+                  ],
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plan_approval_response",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "request_id",
+                "approve"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ],
+      "default": ""
+    },
+    "notify_when_idle": {
+      "description": "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
+      "type": "boolean"
+    },
+    "summary": {
+      "description": "A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected.",
+      "maxLength": 200,
+      "type": "string"
+    },
+    "to": {
+      "allOf": [
+        {
+          "pattern": "^[^\\n\\r]*$"
+        },
+        {
+          "pattern": "^[\\s\\S]{0,300}$"
+        }
+      ],
+      "description": "Recipient: a name from ListAgents (append its \" [ref]\" only when a listing or an error shows one), a teammate name, \"main\", or a background agent's agentId",
+      "type": "string"
+    }
+  },
+  "required": [
+    "to",
+    "message"
+  ],
+  "type": "object"
+}

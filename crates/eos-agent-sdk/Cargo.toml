@@ -1,0 +1,42 @@
+[package]
+name = "eos-agent-sdk"
+description = "Batteries-included composition: shared services once per process, Claude Code's tools, prompts and subagents per agent."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-agents.workspace = true
+eos-agent-anthropic.workspace = true
+eos-agent-artifacts.workspace = true
+eos-agent-compat.workspace = true
+eos-agent-core.workspace = true
+eos-agent-engine.workspace = true
+eos-agent-mcp.workspace = true
+eos-agent-openai.workspace = true
+eos-agent-prompt.workspace = true
+eos-agent-skills.workspace = true
+eos-agent-tools-fs.workspace = true
+eos-agent-tools-session.workspace = true
+eos-agent-tools-shell.workspace = true
+eos-agent-tools-web.workspace = true
+eos-agent-types.workspace = true
+eos-agent-workflow.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true, features = ["ws"] }
+eos-agent-mock-api.workspace = true
+eos-agent-testkit.workspace = true
+futures-util.workspace = true
+
+[lints]
+workspace = true

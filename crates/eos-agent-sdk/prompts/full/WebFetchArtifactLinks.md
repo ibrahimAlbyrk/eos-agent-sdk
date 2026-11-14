@@ -1,0 +1,1 @@
+- claude.ai artifact links (claude.ai/artifact/{id} or claude.ai/code/artifact/{uuid}, including preview.claude.ai) are published artifacts: read them with the Artifact tool (action "read"), not WebFetch, curl or a headless browser.

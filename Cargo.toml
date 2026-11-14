@@ -1,0 +1,98 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tools/*", "xtask"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+eos-agent-types = { path = "crates/eos-agent-types" }
+eos-agent-testkit = { path = "crates/eos-agent-testkit" }
+eos-agent-mock-api = { path = "tools/mock-api" }
+eos-agent-core = { path = "crates/eos-agent-core" }
+eos-agent-anthropic = { path = "crates/eos-agent-anthropic" }
+eos-agent-oauth = { path = "crates/eos-agent-oauth" }
+eos-agent-http = { path = "crates/eos-agent-http" }
+eos-agent-openai = { path = "crates/eos-agent-openai" }
+eos-agent-engine = { path = "crates/eos-agent-engine" }
+eos-agent-cli = { path = "crates/eos-agent-cli" }
+eos-agent-tools-fs = { path = "crates/eos-agent-tools-fs" }
+eos-agent-tools-shell = { path = "crates/eos-agent-tools-shell" }
+eos-agent-prompt = { path = "crates/eos-agent-prompt" }
+eos-agent-compat = { path = "crates/eos-agent-compat" }
+eos-agent-tools-session = { path = "crates/eos-agent-tools-session" }
+eos-agent-tools-web = { path = "crates/eos-agent-tools-web" }
+eos-agent-skills = { path = "crates/eos-agent-skills" }
+eos-agent-mcp = { path = "crates/eos-agent-mcp" }
+eos-agent-agents = { path = "crates/eos-agent-agents" }
+eos-agent-artifacts = { path = "crates/eos-agent-artifacts" }
+eos-agent-sdk = { path = "crates/eos-agent-sdk" }
+eos-agent-server = { path = "crates/eos-agent-server" }
+eos-agent-workflow = { path = "crates/eos-agent-workflow" }
+
+anyhow = "1"
+# Already built for rustls (reqwest); the same features, so no second build.
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+base64 = "0.23"
+globset = "0.4"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+regex = "1"
+axum = "0.8"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+# The `chat` question dialog (raw mode, keys, cursor).
+crossterm = { version = "0.29", default-features = false, features = ["events", "bracketed-paste"] }
+fastrand = "2"
+# Claude Code's secret redaction of quoted MCP errors needs look-around.
+fancy-regex = "0.20"
+futures-core = "0.3"
+futures-util = "0.3"
+getrandom = "0.3"
+hex = "0.4"
+http = "1"
+http-body = "1"
+libc = "0.2"
+# The workflow script rewriter (parser and visitor only: no regex parser).
+oxc_allocator = "0.157"
+oxc_ast = "0.157"
+oxc_ast_visit = "0.157"
+oxc_parser = { version = "0.157", default-features = false }
+oxc_span = "0.157"
+oxc_syntax = "0.157"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "http2"] }
+sha2 = "0.11"
+unicode-normalization = "0.1"
+unicode-width = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "fs", "io-util", "signal", "process"] }
+tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+tokio-util = { version = "0.7", default-features = false }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

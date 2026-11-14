@@ -1,0 +1,12 @@
+openai/base.md is adapted from OpenAI Codex (https://github.com/openai/codex),
+codex-rs/core/gpt-5.2-codex_prompt.md at main, 2026-11-08:
+
+    OpenAI Codex
+    Copyright 2025 OpenAI
+    Licensed under the Apache License, Version 2.0
+    (http://www.apache.org/licenses/LICENSE-2.0)
+
+Changes: the identity names Eos instead of Codex and the Codex CLI; the
+apply_patch and plan-tool guidance names this engine's tools (Edit, Write,
+the Task tools); "the CLI" became "the host app"; "The user does not command
+execution outputs" reads "does not see".

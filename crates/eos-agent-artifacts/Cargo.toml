@@ -1,0 +1,31 @@
+[package]
+name = "eos-agent-artifacts"
+description = "Claude Code's Artifact tools over the claude.ai frame API: publish, read, list, types, assets, comments, shared database."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-types.workspace = true
+base64.workspace = true
+bytes.workspace = true
+fastrand.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true, features = ["ws"] }
+eos-agent-anthropic.workspace = true
+
+[lints]
+workspace = true

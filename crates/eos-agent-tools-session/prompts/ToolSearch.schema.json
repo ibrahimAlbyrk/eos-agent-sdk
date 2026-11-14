@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "max_results": {
+      "default": 5,
+      "description": "Maximum number of results to return (default: 5)",
+      "type": "number"
+    },
+    "query": {
+      "description": "Query to find deferred tools. Use \"select:<tool_name>\" for direct selection, or keywords to search.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query",
+    "max_results"
+  ],
+  "type": "object"
+}

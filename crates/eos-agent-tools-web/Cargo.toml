@@ -1,0 +1,25 @@
+[package]
+name = "eos-agent-tools-web"
+description = "WebSearch and WebFetch: Claude Code's web tools over an injected model client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-types.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+htmd = "0.5.6"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+
+[lints]
+workspace = true

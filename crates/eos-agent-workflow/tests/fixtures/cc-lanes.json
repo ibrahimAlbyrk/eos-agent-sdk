@@ -1,0 +1,726 @@
+[
+ {
+  "name": "removed",
+  "scripts": [
+   "const a = await agent('A')\nconst b = await agent('B')\nreturn [a, b, await agent('C')]",
+   "const b = await agent('B')\nreturn [b, await agent('C')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "A",
+     "key": "v2:737144d256e248fa30616567a1bb22e0a84504c3d2b5c5898c449368b6d585ca",
+     "cached": false
+    },
+    {
+     "prompt": "B",
+     "key": "v2:ceac04ab4b9f193adc64805e635f43e8de237f1c08bbdb93bbdcf3c9ac41d0b3",
+     "cached": false
+    },
+    {
+     "prompt": "C",
+     "key": "v2:616f7987897018c51ab22889918bd2fa646ac756f44accac34be9fb94d5fa270",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "B",
+     "key": "v2:ac880ebacc830ba446eb8cc4b38a470b9723d26f0db927dc2eb1c78de96caedb",
+     "cached": false
+    },
+    {
+     "prompt": "C",
+     "key": "v2:4b69c261b0e8489698d22fda13c99fef1b29d70b468951c6722eb6d20a474939",
+     "cached": false
+    }
+   ]
+  ]
+ },
+ {
+  "name": "moved",
+  "scripts": [
+   "const a = await agent('A')\nconst b = await agent('B')\nreturn [a, b, await agent('C')]",
+   "const b = await agent('B')\nconst a = await agent('A')\nreturn [a, b, await agent('C')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "A",
+     "key": "v2:737144d256e248fa30616567a1bb22e0a84504c3d2b5c5898c449368b6d585ca",
+     "cached": false
+    },
+    {
+     "prompt": "B",
+     "key": "v2:ceac04ab4b9f193adc64805e635f43e8de237f1c08bbdb93bbdcf3c9ac41d0b3",
+     "cached": false
+    },
+    {
+     "prompt": "C",
+     "key": "v2:616f7987897018c51ab22889918bd2fa646ac756f44accac34be9fb94d5fa270",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "B",
+     "key": "v2:ac880ebacc830ba446eb8cc4b38a470b9723d26f0db927dc2eb1c78de96caedb",
+     "cached": false
+    },
+    {
+     "prompt": "A",
+     "key": "v2:df16735e7443773c3efd2039b58ce266804daf51fbe2ddf4d540e1509b309d82",
+     "cached": false
+    },
+    {
+     "prompt": "C",
+     "key": "v2:b2e02a5e70bf74084ae81e7fa818cba4d00e115b81f30d3e8ac7cfa92274d666",
+     "cached": false
+    }
+   ]
+  ]
+ },
+ {
+  "name": "tail_edit",
+  "scripts": [
+   "const a = await agent('A')\nconst b = await agent('B')\nreturn [a, b, await agent('C')]",
+   "const a = await agent('A')\nconst b = await agent('B')\nreturn [a, b, await agent('C, edited')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "A",
+     "key": "v2:737144d256e248fa30616567a1bb22e0a84504c3d2b5c5898c449368b6d585ca",
+     "cached": false
+    },
+    {
+     "prompt": "B",
+     "key": "v2:ceac04ab4b9f193adc64805e635f43e8de237f1c08bbdb93bbdcf3c9ac41d0b3",
+     "cached": false
+    },
+    {
+     "prompt": "C",
+     "key": "v2:616f7987897018c51ab22889918bd2fa646ac756f44accac34be9fb94d5fa270",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "A",
+     "key": "v2:737144d256e248fa30616567a1bb22e0a84504c3d2b5c5898c449368b6d585ca",
+     "cached": true
+    },
+    {
+     "prompt": "B",
+     "key": "v2:ceac04ab4b9f193adc64805e635f43e8de237f1c08bbdb93bbdcf3c9ac41d0b3",
+     "cached": true
+    },
+    {
+     "prompt": "C, edited",
+     "key": "v2:2316ade53a012425a6c4b80e4b40b2efdfc28352d4fc106382d9f953fde83f0e",
+     "cached": false
+    }
+   ]
+  ]
+ },
+ {
+  "name": "parallel_reordered",
+  "scripts": [
+   "const r = await parallel([() => agent('X'), () => agent('Y')])\nreturn [r, await agent('Z')]",
+   "const r = await parallel([() => agent('Y'), () => agent('X')])\nreturn [r, await agent('Z')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "X",
+     "key": "v2:1512267853726e90fd27f34efb8048e143a69d838e2d14822f0400605e58df20",
+     "cached": false
+    },
+    {
+     "prompt": "Y",
+     "key": "v2:c0ae45b57bf7d97ad83b5d019a439f9caf1c5da7eb5e4b7f5d1b76496d194b34",
+     "cached": false
+    },
+    {
+     "prompt": "Z",
+     "key": "v2:2e802527d819545ea65a29954e5a6e4a49a8fb954d754bf93bd87a52224964fa",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "Y",
+     "key": "v2:4bb61287d383901cd0d7024687c724ff68fbbeb3bbf1f6bb246ba22077b5b9e6",
+     "cached": false
+    },
+    {
+     "prompt": "X",
+     "key": "v2:a46162881cd40465f239db405d5bf56cdd323533feaee3c47439d1208573f5f6",
+     "cached": false
+    },
+    {
+     "prompt": "Z",
+     "key": "v2:a47b389def7cb66fe30ceeec65719bbf73e7c6d00cbd9cb1827ded5ed6f9dd19",
+     "cached": false
+    }
+   ]
+  ]
+ },
+ {
+  "name": "pipeline_nested",
+  "scripts": [
+   "const out = await pipeline(['p', 'q'], async d => { const a = await agent('review ' + d); return a }, r => parallel([0, 1].map(i => () => agent(`verify ${r} ${i}`))))\nreturn [out, await agent('summary')]",
+   "const out = await pipeline(['p', 'q'], async d => { const a = await agent('review ' + d); return a }, r => parallel([0, 1].map(i => () => agent(`verify ${r} ${i}`))))\nreturn [out, await agent('summary, edited')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "review p",
+     "key": "v2:95421caf1b6bb64dde024e92a3f67a954ac2fcaa4664e4b7c607f183a14ba382",
+     "cached": false
+    },
+    {
+     "prompt": "review q",
+     "key": "v2:2b42ab284fb1fc61208d03f968fc7b2abc3126c5f76aeeac0f2fee715c83e64c",
+     "cached": false
+    },
+    {
+     "prompt": "verify echo:review p 0",
+     "key": "v2:c0f4d9c51cbe6a8532dacef49012b2ee34c0b625bf8ce0fa69e32c1097be1c42",
+     "cached": false
+    },
+    {
+     "prompt": "verify echo:review p 1",
+     "key": "v2:761155085d01d809a123f64fccf8185e236aa0cf367389626388ffbee3f79ad4",
+     "cached": false
+    },
+    {
+     "prompt": "verify echo:review q 0",
+     "key": "v2:a810e843a25b6e80cae4d8320d7b818ecb6289062ec9a3209f8e2d295ad517c2",
+     "cached": false
+    },
+    {
+     "prompt": "verify echo:review q 1",
+     "key": "v2:cb9d79c85058b709c7bdd190de3eb10c0df15e75732c2625927d07ab45868acf",
+     "cached": false
+    },
+    {
+     "prompt": "summary",
+     "key": "v2:266d487140a0215c8c691f0675abfb1e814be1b3aca383e16f722d2e5a542015",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "review p",
+     "key": "v2:95421caf1b6bb64dde024e92a3f67a954ac2fcaa4664e4b7c607f183a14ba382",
+     "cached": true
+    },
+    {
+     "prompt": "review q",
+     "key": "v2:2b42ab284fb1fc61208d03f968fc7b2abc3126c5f76aeeac0f2fee715c83e64c",
+     "cached": true
+    },
+    {
+     "prompt": "verify echo:review p 0",
+     "key": "v2:c0f4d9c51cbe6a8532dacef49012b2ee34c0b625bf8ce0fa69e32c1097be1c42",
+     "cached": true
+    },
+    {
+     "prompt": "verify echo:review p 1",
+     "key": "v2:761155085d01d809a123f64fccf8185e236aa0cf367389626388ffbee3f79ad4",
+     "cached": true
+    },
+    {
+     "prompt": "verify echo:review q 0",
+     "key": "v2:a810e843a25b6e80cae4d8320d7b818ecb6289062ec9a3209f8e2d295ad517c2",
+     "cached": true
+    },
+    {
+     "prompt": "verify echo:review q 1",
+     "key": "v2:cb9d79c85058b709c7bdd190de3eb10c0df15e75732c2625927d07ab45868acf",
+     "cached": true
+    },
+    {
+     "prompt": "summary, edited",
+     "key": "v2:caae0492153c20eb60ba313a024add3ba67ff81f348627099a7ac4bb630f94da",
+     "cached": false
+    }
+   ]
+  ]
+ },
+ {
+  "name": "then_chains",
+  "scripts": [
+   "const r = await parallel(['m', 'n'].map(x => () => agent('first ' + x).then(a => agent('second ' + a)).then(b => agent('third ' + b))))\nreturn r",
+   "const r = await parallel(['m', 'n'].map(x => () => agent('first ' + x).then(a => agent('second ' + a)).then(b => agent('third ' + b))))\nreturn r"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "first m",
+     "key": "v2:3a8583d95a65407ed03c80eb35f78dbc13d694aca4f214c0ee1e74bfb93dd72b",
+     "cached": false
+    },
+    {
+     "prompt": "first n",
+     "key": "v2:39033e96914dd46d5c986bd1110eccd4fd58eaba588363b06cd0fce643341c25",
+     "cached": false
+    },
+    {
+     "prompt": "second echo:first m",
+     "key": "v2:ec540a0c663316b1f99cf119f0a2c169015294e6b5f7a7d41a1947d69d8604ab",
+     "cached": false
+    },
+    {
+     "prompt": "second echo:first n",
+     "key": "v2:10d80d6dbe9afa4d67a31f8abd792a10ac635194bb466fd415be71563c8fcef0",
+     "cached": false
+    },
+    {
+     "prompt": "third echo:second echo:first m",
+     "key": "v2:95668b34886af0af3658689812eac8714f3c2e7d4388c7701b77bc870aaf2bcd",
+     "cached": false
+    },
+    {
+     "prompt": "third echo:second echo:first n",
+     "key": "v2:698d485e2d0ecab8ae41096a9555cab6c50b777d2121809917509044adcf1e51",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "first m",
+     "key": "v2:3a8583d95a65407ed03c80eb35f78dbc13d694aca4f214c0ee1e74bfb93dd72b",
+     "cached": true
+    },
+    {
+     "prompt": "first n",
+     "key": "v2:39033e96914dd46d5c986bd1110eccd4fd58eaba588363b06cd0fce643341c25",
+     "cached": true
+    },
+    {
+     "prompt": "second echo:first m",
+     "key": "v2:ec540a0c663316b1f99cf119f0a2c169015294e6b5f7a7d41a1947d69d8604ab",
+     "cached": true
+    },
+    {
+     "prompt": "second echo:first n",
+     "key": "v2:10d80d6dbe9afa4d67a31f8abd792a10ac635194bb466fd415be71563c8fcef0",
+     "cached": true
+    },
+    {
+     "prompt": "third echo:second echo:first m",
+     "key": "v2:95668b34886af0af3658689812eac8714f3c2e7d4388c7701b77bc870aaf2bcd",
+     "cached": true
+    },
+    {
+     "prompt": "third echo:second echo:first n",
+     "key": "v2:698d485e2d0ecab8ae41096a9555cab6c50b777d2121809917509044adcf1e51",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "catch_and_timer",
+  "scripts": [
+   "let x\ntry { await Promise.reject(new Error('no')) } catch (e) { x = await agent('caught ' + e.message) }\nawait new Promise(r => setTimeout(r, 5))\nreturn [x, await agent('later')]",
+   "let x\ntry { await Promise.reject(new Error('no')) } catch (e) { x = await agent('caught ' + e.message) }\nawait new Promise(r => setTimeout(r, 5))\nreturn [x, await agent('later')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "caught no",
+     "key": "v2:7e3c496983ff43ffaa0a5a005efef924d5a9efd01f377dc97ccec4d72ef6409c",
+     "cached": false
+    },
+    {
+     "prompt": "later",
+     "key": "v2:dbe23a441695a7c591852b6f0e7c71a989618050ec2784bfb3c65b0585504360",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "caught no",
+     "key": "v2:7e3c496983ff43ffaa0a5a005efef924d5a9efd01f377dc97ccec4d72ef6409c",
+     "cached": true
+    },
+    {
+     "prompt": "later",
+     "key": "v2:dbe23a441695a7c591852b6f0e7c71a989618050ec2784bfb3c65b0585504360",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "gate",
+  "scripts": [
+   "let release\nconst gate = new Promise(r => { release = r })\nconst branch = parallel([async () => { const a = await agent('wait:5:inner'); release(); return await agent('inner 2 ' + a) }, async () => { await agent('wait:20:other'); return await agent('other 2') }])\nawait gate\nconst z = await agent('root')\nreturn [await branch, z]",
+   "let release\nconst gate = new Promise(r => { release = r })\nconst branch = parallel([async () => { const a = await agent('wait:5:inner'); release(); return await agent('inner 2 ' + a) }, async () => { await agent('wait:20:other'); return await agent('other 2') }])\nawait gate\nconst z = await agent('root')\nreturn [await branch, z]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "wait:5:inner",
+     "key": "v2:2b88cf8ca93cb5c5a73bc8b6950ab9ad80ba5900f53f8f590cb02c8f7f7293d9",
+     "cached": false
+    },
+    {
+     "prompt": "wait:20:other",
+     "key": "v2:d2d9679d171bd886d9eef8ed4b0fdb5e0634bbb2abd32cf5345a57887b8d85f6",
+     "cached": false
+    },
+    {
+     "prompt": "inner 2 echo:wait:5:inner",
+     "key": "v2:024bf49d01873207531ad06d924aa0411b35e0337a9eb286a76f2428bfb8cee8",
+     "cached": false
+    },
+    {
+     "prompt": "root",
+     "key": "v2:55d52a0d6cc7ef97561c49433fbc8e86776cf71e211b9be24ffded579b555c44",
+     "cached": false
+    },
+    {
+     "prompt": "other 2",
+     "key": "v2:28259e9c11643934603a9bdf3598a03d5c236927388f65f7586854cbd89df216",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:5:inner",
+     "key": "v2:2b88cf8ca93cb5c5a73bc8b6950ab9ad80ba5900f53f8f590cb02c8f7f7293d9",
+     "cached": true
+    },
+    {
+     "prompt": "wait:20:other",
+     "key": "v2:d2d9679d171bd886d9eef8ed4b0fdb5e0634bbb2abd32cf5345a57887b8d85f6",
+     "cached": true
+    },
+    {
+     "prompt": "inner 2 echo:wait:5:inner",
+     "key": "v2:024bf49d01873207531ad06d924aa0411b35e0337a9eb286a76f2428bfb8cee8",
+     "cached": true
+    },
+    {
+     "prompt": "other 2",
+     "key": "v2:28259e9c11643934603a9bdf3598a03d5c236927388f65f7586854cbd89df216",
+     "cached": true
+    },
+    {
+     "prompt": "root",
+     "key": "v2:55d52a0d6cc7ef97561c49433fbc8e86776cf71e211b9be24ffded579b555c44",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "catch_in_branch",
+  "scripts": [
+   "let fail\nconst shared = new Promise((_, rej) => { fail = rej })\nreturn await parallel([async () => { try { await shared } catch (e) { return await agent('in catch ' + e.message) } }, async () => { try { await shared } finally { await agent('in finally') } }, async () => { await agent('wait:5:b'); fail(new Error('x')); return await agent('b2') }])",
+   "let fail\nconst shared = new Promise((_, rej) => { fail = rej })\nreturn await parallel([async () => { try { await shared } catch (e) { return await agent('in catch ' + e.message) } }, async () => { try { await shared } finally { await agent('in finally') } }, async () => { await agent('wait:5:b'); fail(new Error('x')); return await agent('b2') }])"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "wait:5:b",
+     "key": "v2:593d76e0279013f2508527d1a2ab6083c262286a574624d85c4ecb6e1624f452",
+     "cached": false
+    },
+    {
+     "prompt": "b2",
+     "key": "v2:930163e22b377ba5be1214e09b8eb10649a4e506e556b7905c9ef32312016ea6",
+     "cached": false
+    },
+    {
+     "prompt": "in catch x",
+     "key": "v2:a60db3e65573a2a72540ffc1a0dece2b44510a447b68d3ae13b1501cf16bd906",
+     "cached": false
+    },
+    {
+     "prompt": "in finally",
+     "key": "v2:16ac6b1739cb34eb1b5366b1a182eba67c617901b461e11f8e718ac8cd2b904e",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:5:b",
+     "key": "v2:593d76e0279013f2508527d1a2ab6083c262286a574624d85c4ecb6e1624f452",
+     "cached": true
+    },
+    {
+     "prompt": "b2",
+     "key": "v2:930163e22b377ba5be1214e09b8eb10649a4e506e556b7905c9ef32312016ea6",
+     "cached": true
+    },
+    {
+     "prompt": "in catch x",
+     "key": "v2:a60db3e65573a2a72540ffc1a0dece2b44510a447b68d3ae13b1501cf16bd906",
+     "cached": true
+    },
+    {
+     "prompt": "in finally",
+     "key": "v2:16ac6b1739cb34eb1b5366b1a182eba67c617901b461e11f8e718ac8cd2b904e",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "for_await",
+  "scripts": [
+   "async function* gen(xs) { for (const x of xs) yield await agent('wait:' + (x.length * 3) + ':gen ' + x) }\nreturn await parallel(['p', 'qq'].map(k => async () => { const out = []; for await (const v of gen([k + '1', k + '2'])) out.push(await agent('use ' + v)); return out.concat(await agent('done ' + k)) }))",
+   "async function* gen(xs) { for (const x of xs) yield await agent('wait:' + (x.length * 3) + ':gen ' + x) }\nreturn await parallel(['p', 'qq'].map(k => async () => { const out = []; for await (const v of gen([k + '1', k + '2'])) out.push(await agent('use ' + v)); return out.concat(await agent('done ' + k)) }))"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "wait:6:gen p1",
+     "key": "v2:df268531b4cee9d211d6315725f2d3c4933f569d1fa02f2b6147d9dc9195453e",
+     "cached": false
+    },
+    {
+     "prompt": "wait:9:gen qq1",
+     "key": "v2:8397aec44e86928d66b5158665462d78100cf22ca968750d7c53e1c1b5be819a",
+     "cached": false
+    },
+    {
+     "prompt": "use echo:wait:6:gen p1",
+     "key": "v2:d1c7a88f2d55c462d49a716f8f0449b52f2c3a9c9cea0cb957e2fae84c068016",
+     "cached": false
+    },
+    {
+     "prompt": "wait:6:gen p2",
+     "key": "v2:91463b03abe03886e6a672fdbe7c1a98e02dba8f3bbcf16420be0060a7a6f9a1",
+     "cached": false
+    },
+    {
+     "prompt": "use echo:wait:9:gen qq1",
+     "key": "v2:2f4be398b5e0fd1e1864f56a00c6593f596ee1941953e22db99cab2e026e7c5d",
+     "cached": false
+    },
+    {
+     "prompt": "wait:9:gen qq2",
+     "key": "v2:ada7ea5ee98c8e5de543ead626d26a4e74fc8885867f73b29f9abec99f92cb70",
+     "cached": false
+    },
+    {
+     "prompt": "use echo:wait:6:gen p2",
+     "key": "v2:36779f22a383944ca34aae11666948014d5fbf4d6a9bd67cf3ebbeba5c575082",
+     "cached": false
+    },
+    {
+     "prompt": "done p",
+     "key": "v2:4d3842124dcc38a07db059d3ba50c93625ca4c3e3fb6d5f8a769e5491f2bd5b1",
+     "cached": false
+    },
+    {
+     "prompt": "use echo:wait:9:gen qq2",
+     "key": "v2:e3aa05f23a99ca56debed66aa6908a4ec1c6f402453a27c91012bd4e228c6e8e",
+     "cached": false
+    },
+    {
+     "prompt": "done qq",
+     "key": "v2:ef2767b7a329a5be6363b51bf0d53ba5412175f9eea337954b6314c8e4e6765b",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:6:gen p1",
+     "key": "v2:df268531b4cee9d211d6315725f2d3c4933f569d1fa02f2b6147d9dc9195453e",
+     "cached": true
+    },
+    {
+     "prompt": "wait:9:gen qq1",
+     "key": "v2:8397aec44e86928d66b5158665462d78100cf22ca968750d7c53e1c1b5be819a",
+     "cached": true
+    },
+    {
+     "prompt": "use echo:wait:6:gen p1",
+     "key": "v2:d1c7a88f2d55c462d49a716f8f0449b52f2c3a9c9cea0cb957e2fae84c068016",
+     "cached": true
+    },
+    {
+     "prompt": "use echo:wait:9:gen qq1",
+     "key": "v2:2f4be398b5e0fd1e1864f56a00c6593f596ee1941953e22db99cab2e026e7c5d",
+     "cached": true
+    },
+    {
+     "prompt": "wait:6:gen p2",
+     "key": "v2:91463b03abe03886e6a672fdbe7c1a98e02dba8f3bbcf16420be0060a7a6f9a1",
+     "cached": true
+    },
+    {
+     "prompt": "wait:9:gen qq2",
+     "key": "v2:ada7ea5ee98c8e5de543ead626d26a4e74fc8885867f73b29f9abec99f92cb70",
+     "cached": true
+    },
+    {
+     "prompt": "use echo:wait:6:gen p2",
+     "key": "v2:36779f22a383944ca34aae11666948014d5fbf4d6a9bd67cf3ebbeba5c575082",
+     "cached": true
+    },
+    {
+     "prompt": "use echo:wait:9:gen qq2",
+     "key": "v2:e3aa05f23a99ca56debed66aa6908a4ec1c6f402453a27c91012bd4e228c6e8e",
+     "cached": true
+    },
+    {
+     "prompt": "done p",
+     "key": "v2:4d3842124dcc38a07db059d3ba50c93625ca4c3e3fb6d5f8a769e5491f2bd5b1",
+     "cached": true
+    },
+    {
+     "prompt": "done qq",
+     "key": "v2:ef2767b7a329a5be6363b51bf0d53ba5412175f9eea337954b6314c8e4e6765b",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "for_await_shared",
+  "scripts": [
+   "let o1, o2\nconst g1 = new Promise(r => { o1 = r }), g2 = new Promise(r => { o2 = r })\nlet i = 0\nconst it = { [Symbol.asyncIterator]() { return { next: () => (i++ === 0 ? g1 : g2) } } }\nreturn await parallel([async () => { const out = []; for await (const v of it) out.push(await agent('use ' + v)); return out.concat(await agent('after loop')) }, async () => { await agent('wait:5:b'); o1({ value: 'v', done: false }); await agent('wait:20:b2'); o2({ value: undefined, done: true }); return await agent('b3') }])",
+   "let o1, o2\nconst g1 = new Promise(r => { o1 = r }), g2 = new Promise(r => { o2 = r })\nlet i = 0\nconst it = { [Symbol.asyncIterator]() { return { next: () => (i++ === 0 ? g1 : g2) } } }\nreturn await parallel([async () => { const out = []; for await (const v of it) out.push(await agent('use ' + v)); return out.concat(await agent('after loop')) }, async () => { await agent('wait:5:b'); o1({ value: 'v', done: false }); await agent('wait:20:b2'); o2({ value: undefined, done: true }); return await agent('b3') }])"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "wait:5:b",
+     "key": "v2:8cb5d065d5d10d2eb01db1bd8feba293e7e2f829a0eb006763a0c96aca05e83c",
+     "cached": false
+    },
+    {
+     "prompt": "wait:20:b2",
+     "key": "v2:7eb7b43ec9b4242cdec0dcda543cd32f751b79316167bf79f0f599b0a7ecff19",
+     "cached": false
+    },
+    {
+     "prompt": "use v",
+     "key": "v2:567b8666a07ab1de7f340fb6ddbce8c75811bfa577323a6546a7c9e4fc257b95",
+     "cached": false
+    },
+    {
+     "prompt": "b3",
+     "key": "v2:522554f4411ca3e3be1b18dc2fd2839cbc371724a60e46011cc4b1defc336b91",
+     "cached": false
+    },
+    {
+     "prompt": "after loop",
+     "key": "v2:d7f6eb3001b0ed534587bdb5b7bd99afdd5eb1c2d0e8fc3cbb203f93a57b95cc",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:5:b",
+     "key": "v2:8cb5d065d5d10d2eb01db1bd8feba293e7e2f829a0eb006763a0c96aca05e83c",
+     "cached": true
+    },
+    {
+     "prompt": "wait:20:b2",
+     "key": "v2:7eb7b43ec9b4242cdec0dcda543cd32f751b79316167bf79f0f599b0a7ecff19",
+     "cached": true
+    },
+    {
+     "prompt": "use v",
+     "key": "v2:567b8666a07ab1de7f340fb6ddbce8c75811bfa577323a6546a7c9e4fc257b95",
+     "cached": true
+    },
+    {
+     "prompt": "b3",
+     "key": "v2:522554f4411ca3e3be1b18dc2fd2839cbc371724a60e46011cc4b1defc336b91",
+     "cached": true
+    },
+    {
+     "prompt": "after loop",
+     "key": "v2:d7f6eb3001b0ed534587bdb5b7bd99afdd5eb1c2d0e8fc3cbb203f93a57b95cc",
+     "cached": true
+    }
+   ]
+  ]
+ },
+ {
+  "name": "rerun_replaced",
+  "scripts": [
+   "const r = await parallel([() => agent('wait:5:X'), () => agent('wait:30:Y').then(y => agent('after ' + y))])\nreturn [r, await agent('Z')]",
+   "const r = await parallel([() => agent('wait:5:X, edited'), () => agent('wait:30:Y').then(y => agent('after ' + y))])\nreturn [r, await agent('Z')]",
+   "const r = await parallel([() => agent('wait:5:X, edited'), () => agent('wait:30:Y').then(y => agent('after ' + y))])\nreturn [r, await agent('Z')]"
+  ],
+  "runs": [
+   [
+    {
+     "prompt": "wait:5:X",
+     "key": "v2:7bf30f569372a1096195a2668422f4d0a4b1b8384896dd98e07f5decaed08b65",
+     "cached": false
+    },
+    {
+     "prompt": "wait:30:Y",
+     "key": "v2:14718051f508c811e09ef58df31d4d4d42e9a703f3e0a261e5e2e7c1fc452fb7",
+     "cached": false
+    },
+    {
+     "prompt": "after echo:wait:30:Y",
+     "key": "v2:9fc257fc82cfc255e574eba27d67d8cc04deca0c898db0ea89e14c780d88fe83",
+     "cached": false
+    },
+    {
+     "prompt": "Z",
+     "key": "v2:b41956557dc5d2a01ae339e5532a0a49a1fa1baa91b815cd14c7710a89dbcdf3",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:5:X, edited",
+     "key": "v2:1021cc58fce115649b158aa1fdd5467471953c64fb06aba0af1bce0ce84d9b65",
+     "cached": false
+    },
+    {
+     "prompt": "wait:30:Y",
+     "key": "v2:14718051f508c811e09ef58df31d4d4d42e9a703f3e0a261e5e2e7c1fc452fb7",
+     "cached": false
+    },
+    {
+     "prompt": "after echo:wait:30:Y",
+     "key": "v2:1b3bcdff127ecd9ba620c37b39ea5c8a94f4d2de42e118556c7e385ef0595efa",
+     "cached": false
+    },
+    {
+     "prompt": "Z",
+     "key": "v2:4fdc6058010896ac7f8911a675a89965f8f6a86f1af36ae31851cbf2370616ad",
+     "cached": false
+    }
+   ],
+   [
+    {
+     "prompt": "wait:5:X, edited",
+     "key": "v2:1021cc58fce115649b158aa1fdd5467471953c64fb06aba0af1bce0ce84d9b65",
+     "cached": true
+    },
+    {
+     "prompt": "wait:30:Y",
+     "key": "v2:14718051f508c811e09ef58df31d4d4d42e9a703f3e0a261e5e2e7c1fc452fb7",
+     "cached": true
+    },
+    {
+     "prompt": "after echo:wait:30:Y",
+     "key": "v2:1b3bcdff127ecd9ba620c37b39ea5c8a94f4d2de42e118556c7e385ef0595efa",
+     "cached": true
+    },
+    {
+     "prompt": "Z",
+     "key": "v2:4fdc6058010896ac7f8911a675a89965f8f6a86f1af36ae31851cbf2370616ad",
+     "cached": true
+    }
+   ]
+  ]
+ }
+]

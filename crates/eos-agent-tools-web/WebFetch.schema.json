@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "offset": {
+      "description": "Character position in the page text to start reading from. Use it to read on through a page too long for one call, with the value the previous result gave.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "prompt": {
+      "description": "The prompt to run on the fetched content",
+      "type": "string"
+    },
+    "url": {
+      "description": "The URL to fetch content from",
+      "format": "uri",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url",
+    "prompt"
+  ],
+  "type": "object"
+}

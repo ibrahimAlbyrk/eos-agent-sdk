@@ -1,0 +1,28 @@
+[package]
+name = "eos-agent-anthropic"
+description = "Anthropic Messages API client: streaming, retries mapping, auth (API key and Claude sign-in)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-http.workspace = true
+eos-agent-oauth.workspace = true
+eos-agent-types.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+eos-agent-mock-api.workspace = true
+axum.workspace = true
+
+[lints]
+workspace = true

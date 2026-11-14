@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledge_duplicate": {
+      "description": "reply only: post even though a Claude reply already stands after every \"sent to Claude\" request on the thread. Without it such a reply is refused as a likely duplicate. Pass true only for a deliberate follow-up that adds something new — never to restate what the standing reply said.",
+      "type": "boolean"
+    },
+    "action": {
+      "description": "'read' reads the comment threads on the artifact at `url` (add `thread_id` for one thread, or `cursor` to continue a listing); 'reply' posts `text` into the thread `thread_id`; 'resolve' marks that thread resolved; 'watch' manages this session's artifact watches — with `url` it starts watching that artifact (`on: false` stops), with no `url` it lists this session's watches and rooms, and `replies: true` re-enables automatic comment replies that were stopped or paused for the artifact at `url` (only when the user explicitly asked; approved the way a publish is).",
+      "enum": ["read", "reply", "resolve", "watch"],
+      "type": "string"
+    },
+    "cursor": {
+      "description": "read only: continue a listing that ended with a \"more threads not listed\" line — pass the cursor value that line names to render the threads it could not fit.",
+      "type": "string"
+    },
+    "on": {
+      "description": "watch only: false stops watching the artifact at `url`; omit (or true) to start.",
+      "type": "boolean"
+    },
+    "replies": {
+      "description": "watch only: true re-enables automatic comment replies for the artifact at `url` after the user stopped or paused them — pass it ONLY when the user explicitly asked to resume.",
+      "type": "boolean"
+    },
+    "text": {
+      "description": "reply only: the reply text. Plain text, at most 4096 bytes of UTF-8.",
+      "type": "string"
+    },
+    "thread_id": {
+      "description": "reply: id of the comment thread to reply into. resolve: the thread to mark resolved. read: read just this one thread (the size cap can still elide a very long thread). Thread ids come from action \"read\" and from comment notifications.",
+      "type": "string"
+    },
+    "url": {
+      "description": "The artifact's claude.ai URL. Required for every action except a bare 'watch' listing.",
+      "type": "string"
+    }
+  },
+  "required": ["action"],
+  "type": "object"
+}

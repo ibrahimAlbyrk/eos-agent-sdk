@@ -1,0 +1,23 @@
+[package]
+name = "eos-agent-oauth"
+description = "OAuth plumbing the provider adapters share: secret stores, cross-process refresh locks, PKCE, the loopback callback, form encoding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+aws-lc-rs.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+unicode-normalization.workspace = true
+
+[lints]
+workspace = true

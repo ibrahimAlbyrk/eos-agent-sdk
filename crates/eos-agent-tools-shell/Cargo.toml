@@ -1,0 +1,42 @@
+[package]
+name = "eos-agent-tools-shell"
+description = "Claude Code's shell tools: Bash (with background commands), Monitor and TaskStop."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aws-lc-rs.workspace = true
+base64.workspace = true
+bytes.workspace = true
+eos-agent-core.workspace = true
+fastrand.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+libc.workspace = true
+# The TLS-terminating proxy's CA and leaf certificates (sandbox.network.tlsTerminate).
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
+regex.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+serde.workspace = true
+serde_json.workspace = true
+time = "0.3"
+tokio = { workspace = true, features = ["process"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs"] }
+tracing.workspace = true
+uuid.workspace = true
+webpki-root-certs = "1"
+x509-parser = { version = "0.18", default-features = false }
+
+[dev-dependencies]
+eos-agent-types.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["process", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

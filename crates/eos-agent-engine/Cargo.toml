@@ -1,0 +1,27 @@
+[package]
+name = "eos-agent-engine"
+description = "Runs many agents in one process: lifecycle, event delivery, persistence."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-types.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+eos-agent-anthropic.workspace = true
+eos-agent-mock-api.workspace = true
+eos-agent-testkit.workspace = true
+
+[lints]
+workspace = true

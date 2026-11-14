@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "todos": {
+      "description": "The updated todo list",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "activeForm": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "content": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "status",
+          "activeForm"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "todos"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,47 @@
+[package]
+name = "eos-agent-mcp"
+description = "MCP client: shared server connections exposed as agent tools."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+eos-agent-core.workspace = true
+eos-agent-oauth.workspace = true
+eos-agent-types.workspace = true
+base64.workspace = true
+fancy-regex.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+http.workspace = true
+libc.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sse-stream = "0.2"
+thiserror.workspace = true
+tokio.workspace = true
+unicode-normalization.workspace = true
+process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "process-group"] }
+rmcp = { version = "3.9.0", default-features = false, features = ["base64", "client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
+
+[dev-dependencies]
+eos-agent-anthropic.workspace = true
+axum.workspace = true
+# Serves the mock token endpoints over TLS (XAA requires https there); already in the lock through reqwest.
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs"] }
+
+# A tiny stdio MCP server the integration tests start; not part of the library.
+[[bin]]
+name = "eos-mcp-test-server"
+path = "tests/support/test_server.rs"
+test = false
+doc = false
+
+[lints]
+workspace = true

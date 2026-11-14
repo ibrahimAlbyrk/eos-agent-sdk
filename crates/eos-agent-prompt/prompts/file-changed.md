@@ -1,0 +1,1 @@
+Note: {{PATH}} changed on disk since you last read it. That's usually deliberate, so take it as the current state rather than reverting it; if the change looks wrong, say so rather than undoing it yourself — otherwise no need to call it out. The changes are not shown here; use Read if you need the current content.

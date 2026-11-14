@@ -6,6 +6,9 @@
 //!   user-only `/design` and `/slides`, and with the Artifact tools the
 //!   bundled `artifact-design`, `artifact-diagramming` and
 //!   `artifact-capabilities`.
+//! - Skills found as agents work ([`SkillCatalog::touched`]): a
+//!   subdirectory's own `.claude/skills` (listed as `dir:name` when the name
+//!   is taken) and skills whose `paths` match a touched file.
 //! - The listing the model reads ([`SkillCatalog::listing`]) and a
 //!   [`SkillListingReminder`] that announces skills added later.
 //! - One expansion path for `/name args` typed by the user
@@ -23,6 +26,7 @@ mod frontmatter;
 mod inline;
 mod listing;
 mod plugins;
+mod scoped;
 mod skill;
 mod tool;
 
@@ -36,5 +40,6 @@ pub use fork::{
 };
 pub use inline::{CommandRunner, NoCommands, ShellFailure};
 pub use listing::{LISTING_HEADER, ListingBudget, SkillListingReminder};
+pub use scoped::Discovered;
 pub use skill::{Origin, Skill};
 pub use tool::{PendingGrants, SKILL_TOOL, SkillGrant, SkillTool};

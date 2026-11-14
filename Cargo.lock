@@ -956,6 +956,7 @@ version = "0.0.1"
 dependencies = [
  "eos-agent-core",
  "eos-agent-types",
+ "ignore",
  "serde",
  "serde_json",
  "thiserror",

@@ -1,11 +1,13 @@
 //! Every skill and prompt command of a session, by name.
 
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use crate::discover::{self, SkillRoots};
 use crate::expand::{self, ExpandContext, ExpandError, Expansion};
 use crate::listing::{self, ListingBudget};
+use crate::scoped::{self, Discovered, Found};
 use crate::skill::{Origin, Skill};
 
 /// Shared by every agent of a session (one `Arc`); [`SkillCatalog::reload`]
@@ -14,6 +16,10 @@ use crate::skill::{Origin, Skill};
 #[derive(Debug, Default)]
 pub struct SkillCatalog {
     entries: RwLock<Arc<Entries>>,
+    /// What discovery found, in precedence order.
+    base: RwLock<Vec<Skill>>,
+    /// Skills found as the agents touch files (see [`crate::scoped`]).
+    found: Mutex<Found>,
 }
 
 #[derive(Debug, Default)]
@@ -53,21 +59,92 @@ reserved for explicit user invocation."
 }
 
 impl SkillCatalog {
+    /// The skills of `roots`; the project root (`roots.cwd`) is where
+    /// directory-scoped skills are looked for below.
     pub fn discover(roots: &SkillRoots) -> Self {
-        Self::from_skills(discover::discover(roots))
+        let catalog = Self::from_skills(discover::discover(roots));
+        *catalog.found.lock().unwrap_or_else(PoisonError::into_inner) = Found::new(roots.cwd.clone());
+        catalog
     }
 
     pub fn from_skills(skills: Vec<Skill>) -> Self {
-        Self { entries: RwLock::new(Arc::new(Entries::new(skills))) }
+        let catalog = Self { base: RwLock::new(skills), ..Self::default() };
+        catalog.rebuild();
+        catalog
     }
 
-    /// Discovers again (new or edited skill files).
+    /// Discovers again (new or edited skill files); skills found below the
+    /// project root stay.
     pub fn reload(&self, roots: &SkillRoots) {
         self.replace(discover::discover(roots));
     }
 
     pub fn replace(&self, skills: Vec<Skill>) {
-        *self.entries.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(Entries::new(skills));
+        *self.base.write().unwrap_or_else(PoisonError::into_inner) = skills;
+        self.rebuild();
+    }
+
+    fn rebuild(&self) {
+        let base = self.base.read().unwrap_or_else(PoisonError::into_inner);
+        let found = self.found.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut all: Vec<Skill> = base
+            .iter()
+            .map(|s| {
+                let mut s = s.clone();
+                if found.activated.contains(&s.name) {
+                    // Its paths matched a touched file: listed from now on.
+                    s.paths.clear();
+                }
+                s
+            })
+            .collect();
+        all.extend(scoped::named(&base, &found.scoped).into_iter().map(|(_, s)| s));
+        drop((base, found));
+        *self.entries.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(Entries::new(all));
+    }
+
+    /// Files an agent read or wrote: finds the `.claude/skills` of the
+    /// folders above them (below the project root) and activates skills
+    /// whose `paths` match. Returns the folders with new skills, each with
+    /// the names they are listed under.
+    pub fn touched(&self, files: &[PathBuf]) -> Vec<Discovered> {
+        let conditional: Vec<Skill> = self
+            .base
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|s| !s.paths.is_empty())
+            .cloned()
+            .collect();
+        let refs: Vec<&Skill> = conditional.iter().collect();
+        let mut found_dirs = Vec::new();
+        let mut changed = false;
+        {
+            let mut found = self.found.lock().unwrap_or_else(PoisonError::into_inner);
+            for file in files {
+                let (dirs, c) = found.touch(file, &refs);
+                found_dirs.extend(dirs);
+                changed |= c;
+            }
+        }
+        if !changed {
+            return Vec::new();
+        }
+        self.rebuild();
+        let names: HashMap<usize, String> = {
+            let base = self.base.read().unwrap_or_else(PoisonError::into_inner);
+            let found = self.found.lock().unwrap_or_else(PoisonError::into_inner);
+            scoped::named(&base, &found.scoped)
+                .into_iter()
+                .filter(|(_, s)| s.is_listed())
+                .map(|(i, s)| (i, s.name))
+                .collect()
+        };
+        found_dirs
+            .into_iter()
+            .map(|(dir, added)| Discovered { dir, names: added.iter().filter_map(|i| names.get(i).cloned()).collect() })
+            .filter(|d| !d.names.is_empty())
+            .collect()
     }
 
     fn snapshot(&self) -> Arc<Entries> {

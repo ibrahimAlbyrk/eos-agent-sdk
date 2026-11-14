@@ -2,9 +2,10 @@
 //! reminder that announces skills added later.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use eos_agent_core::{BoxFuture, Extensions, ReminderSource};
+use eos_agent_core::{BoxFuture, Extensions, FileStates, ReminderSource};
 
 use crate::catalog::SkillCatalog;
 use crate::skill::{Origin, Skill};
@@ -98,11 +99,43 @@ pub struct SkillListingReminder {
 #[derive(Debug, Default)]
 struct Shown(Mutex<Option<HashSet<u64>>>);
 
+/// The files of the agent's file record already looked at for skills.
+#[derive(Debug, Default)]
+struct Looked(Mutex<HashSet<PathBuf>>);
+
 impl SkillListingReminder {
     /// `initial_in_context`: the full listing was already sent with the
     /// session context, so the first call only records what it held.
     pub fn new(catalog: Arc<SkillCatalog>, budget: ListingBudget, initial_in_context: bool) -> Self {
         Self { catalog, budget, initial_in_context }
+    }
+
+    /// Skills found from the files the agent read or wrote since the last
+    /// request: one notice per folder whose own skills were found.
+    fn discovered(&self, extensions: &Extensions) -> Vec<String> {
+        let Some(files) = extensions.get::<FileStates>() else { return Vec::new() };
+        let current: HashSet<PathBuf> = files.snapshot().into_iter().map(|(p, _)| p).collect();
+        let looked = extensions.get_or_default::<Looked>();
+        let mut looked = looked.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let new: Vec<PathBuf> = current.iter().filter(|p| !looked.contains(*p)).cloned().collect();
+        // Only current entries are kept, so the set never outgrows the record.
+        *looked = current;
+        drop(looked);
+        if new.is_empty() {
+            return Vec::new();
+        }
+        self.catalog
+            .touched(&new)
+            .into_iter()
+            .map(|d| {
+                let names: Vec<String> = d.names.iter().map(|n| format!("- {n}")).collect();
+                format!(
+                    "<system-reminder>\nNew skills discovered in {}, now available via the Skill tool:\n{}\n</system-reminder>",
+                    d.dir,
+                    names.join("\n")
+                )
+            })
+            .collect()
     }
 
     fn pending(&self, extensions: &Extensions) -> Option<String> {
@@ -124,8 +157,9 @@ impl SkillListingReminder {
 
 impl ReminderSource for SkillListingReminder {
     fn collect<'a>(&'a self, extensions: &'a Extensions) -> BoxFuture<'a, Vec<String>> {
-        let note = self.pending(extensions);
-        Box::pin(async move { note.into_iter().collect() })
+        let mut notes = self.discovered(extensions);
+        notes.extend(self.pending(extensions));
+        Box::pin(async move { notes })
     }
 }
 

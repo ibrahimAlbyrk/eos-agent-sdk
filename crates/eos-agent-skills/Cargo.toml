@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 eos-agent-core.workspace = true
 eos-agent-types.workspace = true
+ignore.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

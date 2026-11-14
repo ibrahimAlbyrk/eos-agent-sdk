@@ -9,11 +9,17 @@ use serde_json::value::RawValue;
 /// The address of the main conversation.
 const MAIN: &str = "main";
 
+/// The answer to a message that is not plain text.
+const PLAIN_TEXT_ONLY: &str = "Not sent. In this session SendMessage carries only plain text, and only to agents of \
+                               this session: an agent launched in it with the Agent tool or, from a subagent, \
+                               \"main\". Set `to` to such an agent's name, to the agentId from its spawn result, or \
+                               to \"main\".";
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SendInput {
     to: String,
-    /// Text, or a team-protocol response object.
+    /// Text; anything else is refused.
     #[serde(default)]
     message: serde_json::Value,
     #[serde(rename = "summary")]
@@ -63,7 +69,7 @@ impl SendMessageTool {
             include_str!("../prompts/SendMessage.schema.json"),
         )
         .deferred()
-        .with_search_hint("send messages to agent teammates");
+        .with_search_hint("send a message to another agent of this session");
         Self { spec, subagents }
     }
 
@@ -71,12 +77,7 @@ impl SendMessageTool {
         let message = match input.message {
             serde_json::Value::String(text) => text,
             serde_json::Value::Null => String::new(),
-            _ => {
-                return failure(
-                    "Structured team-protocol messages (shutdown/plan responses and requests) are acts of the session \
-                     itself and cannot be sent by a background subagent. Send a plain text message instead.",
-                );
-            }
+            _ => return failure(PLAIN_TEXT_ONLY),
         };
         let mut to = input.to.trim();
         let agents = if to == MAIN { Vec::new() } else { self.subagents.list(ctx.agent_id).await };

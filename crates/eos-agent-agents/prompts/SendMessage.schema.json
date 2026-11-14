@@ -3,106 +3,15 @@
   "additionalProperties": false,
   "properties": {
     "message": {
-      "anyOf": [
-        {
-          "description": "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
-          "type": "string"
-        },
-        {
-          "anyOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "reason": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "shutdown_request",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "approve": {
-                  "type": "boolean"
-                },
-                "reason": {
-                  "type": "string"
-                },
-                "request_id": {
-                  "allOf": [
-                    {
-                      "pattern": "^[^\\n\\r]*$"
-                    },
-                    {
-                      "pattern": "^[\\s\\S]{0,300}$"
-                    }
-                  ],
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "type": {
-                  "const": "shutdown_response",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "request_id",
-                "approve"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "approve": {
-                  "type": "boolean"
-                },
-                "feedback": {
-                  "type": "string"
-                },
-                "request_id": {
-                  "allOf": [
-                    {
-                      "pattern": "^[^\\n\\r]*$"
-                    },
-                    {
-                      "pattern": "^[\\s\\S]{0,300}$"
-                    }
-                  ],
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "type": {
-                  "const": "plan_approval_response",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "request_id",
-                "approve"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      ],
-      "default": ""
+      "description": "Plain text message content",
+      "type": "string"
     },
     "notify_when_idle": {
-      "description": "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
+      "description": "Not available here: only agents of this session can be messaged, and their results reach you as notifications. Leave unset.",
       "type": "boolean"
     },
     "summary": {
-      "description": "A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected.",
+      "description": "A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.",
       "maxLength": 200,
       "type": "string"
     },
@@ -115,7 +24,7 @@
           "pattern": "^[\\s\\S]{0,300}$"
         }
       ],
-      "description": "Recipient: a name from ListAgents (append its \" [ref]\" only when a listing or an error shows one), a teammate name, \"main\", or a background agent's agentId",
+      "description": "Recipient: the name or agentId of an agent of this session, or \"main\" (from a subagent)",
       "type": "string"
     }
   },

@@ -329,7 +329,11 @@ async fn send_message_outputs() {
         &Extensions::default(),
     )
     .await;
-    assert!(texts(&protocol)[0].starts_with(r#"{"success":false,"message":"Structured team-protocol messages"#));
+    assert!(
+        texts(&protocol)[0].starts_with(
+            r#"{"success":false,"message":"Not sent. In this session SendMessage carries only plain text"#
+        )
+    );
     {
         let sends = fake.sends.lock().expect("lock");
         assert_eq!(sends.len(), 3);
@@ -392,6 +396,34 @@ async fn list_agents_output() {
     assert_eq!(fake.sends.lock().expect("lock")[0].1, "a1");
 }
 
+/// Everything SendMessage and ListAgents tell the model holds here: only the
+/// session's own agents can be listed and messaged.
+#[test]
+fn messaging_tools_promise_only_the_sessions_agents() {
+    let fake: Arc<FakeSubagents> = Arc::new(FakeSubagents::default());
+    let tools: [Box<dyn Tool>; 2] = [Box::new(SendMessageTool::new(fake.clone())), Box::new(ListAgentsTool::new(fake))];
+    for tool in tools {
+        let spec = String::from_utf8_lossy(tool.spec().json()).into_owned();
+        for absent in [
+            "teammate",
+            "Teammate",
+            "team-lead",
+            "shutdown",
+            "ross-session",
+            "Remote Control",
+            "cloud",
+            "other local",
+            "ON THIS MACHINE",
+        ] {
+            assert!(!spec.contains(absent), "{}: {absent}", tool.spec().name());
+        }
+    }
+    let send = SendMessageTool::new(Arc::new(FakeSubagents::default()));
+    let prompt = String::from_utf8_lossy(send.spec().json()).into_owned();
+    assert!(prompt.contains("No one outside this session can be reached."));
+    assert!(prompt.contains("names keep working after an agent completes (a send resumes it from its transcript)"));
+}
+
 /// Captures are local only (`fixtures/captured/`); without them this passes.
 #[test]
 fn captured_tool_definitions() {
@@ -400,8 +432,8 @@ fn captured_tool_definitions() {
     let fake: Arc<FakeSubagents> = Arc::new(FakeSubagents::default());
     let captured: serde_json::Value = serde_json::from_str(&text).expect("fixture");
     let tools = captured["body"]["tools"].as_array().expect("tools");
-    let ours: [Box<dyn Tool>; 2] =
-        [Box::new(AgentTool::new(fake.clone(), definitions())), Box::new(ListAgentsTool::new(fake))];
+    // ListAgents and SendMessage say what this engine offers: agents of the session only.
+    let ours: [Box<dyn Tool>; 1] = [Box::new(AgentTool::new(fake, definitions()))];
     for tool in ours {
         let spec: serde_json::Value = serde_json::from_slice(tool.spec().json()).expect("spec json");
         let theirs = tools.iter().find(|t| t["name"] == spec["name"]).expect("captured");

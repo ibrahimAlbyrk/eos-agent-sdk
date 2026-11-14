@@ -185,6 +185,7 @@ impl Sdk {
             task_events: options.task_events,
             sandbox: project.policy().cloned(),
             internal: internal_paths(services, &project.cwd, &id),
+            confined: false,
             interactive: options.interactive,
             connecting,
             mcp_tools: updates,
@@ -347,6 +348,8 @@ pub(crate) fn agent_spec(
     spec.roots.clone_from(&blueprint.roots);
     spec.scratch = Some(services.data_dir.join("scratch").join(&id));
     spec.internal = blueprint.internal.clone();
+    spec.confined = blueprint.confined;
+    spec.protected.clone_from(&services.protected);
     spec.id = Some(id);
     spec.extensions = extensions;
     spec

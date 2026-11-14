@@ -1,5 +1,5 @@
 //! Reads go anywhere the process can read, decided by the host's permission
-//! gate; writes stay inside the agent's working directories.
+//! gate; an agent isolated in its own worktree writes only inside it.
 
 mod common;
 

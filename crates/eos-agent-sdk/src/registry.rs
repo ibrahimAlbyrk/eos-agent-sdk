@@ -51,6 +51,9 @@ pub(crate) struct Blueprint {
     pub(crate) sandbox: Option<Arc<eos_agent_tools_shell::SandboxPolicy>>,
     /// The session's files every agent of the tree may read or write.
     pub(crate) internal: eos_agent_core::InternalPaths,
+    /// Writes stay inside its roots whatever the permission gate allows: an
+    /// agent isolated in its own worktree, and the plain subagents it starts.
+    pub(crate) confined: bool,
     /// The tree runs as Claude Code's interactive terminal.
     pub(crate) interactive: bool,
     /// The top-level agent's MCP servers as its ToolSearch (and its forks')

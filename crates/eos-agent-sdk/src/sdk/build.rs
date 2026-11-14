@@ -74,6 +74,9 @@ impl SdkBuilder {
             Sandboxes::new(&paths, user_settings.as_ref(), &managed_settings, self.sandbox.take(), network_gate);
         let budgets: Arc<crate::workflows::Budgets> = Arc::default();
         let workflow_settings = WorkflowSettings::read(&settings, |k| std::env::var(k).ok());
+        let mut protected = vec![data_dir.clone()];
+        protected.extend(self.workflow_dir.clone());
+        protected.append(&mut self.protected);
         let workflows = self.workflows.unwrap_or(workflow_settings.enabled).then(|| {
             let mut config = WorkflowConfig::new(self.workflow_dir.take().unwrap_or_else(|| data_dir.clone()));
             config.size = workflow_settings.size;
@@ -180,6 +183,7 @@ impl SdkBuilder {
             shell,
             tool_change_refusals: Arc::default(),
             inline_tools: self.inline_tools.unwrap_or_else(crate::services::inline_tools_from_env),
+            protected,
         });
         Ok(Sdk { services })
     }

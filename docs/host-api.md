@@ -77,8 +77,8 @@ agent.send_input("/review the parser").await?;
 
 `SdkBuilder::permissions(Arc<dyn PermissionGate>)` decides every tool call of
 every agent. A `ToolCall` carries the agent id, the tool-use id, the tool's
-name and input, whether it runs sandboxed, the agent's workspace, and its
-`origin`:
+name and input, whether it runs sandboxed, the agent's workspace, the paths
+the call would write (`writes`) and its `origin`:
 
 - `origin: None`: a top-level agent. `ToolCall::root_id()` is then the agent
   itself.
@@ -98,14 +98,49 @@ the model wrote it.
 
 The input the gate sees is the model's with paths made absolute where the
 tool says so (`Tool::observable_input`, Claude Code's
-`backfillObservableInput`): Read's `file_path`, Glob's and Grep's `path`.
+`backfillObservableInput`): Read's, Edit's and Write's `file_path`,
+NotebookEdit's `notebook_path`, Glob's and Grep's `path`, Artifact's and
+ArtifactData's `out_dir` (`~` expanded, relative paths from the agent's
+current directory).
 
-The gate is the only check on reads: the tools that only read (Read,
-Glob, Grep, Artifact files to publish) take any path the process can read,
-inside the agent's working directories or not. Tools that write
-(Edit, Write, NotebookEdit, an Artifact download folder) stay inside the
-working directories (and the engine's own files they may write), whatever
-the gate answers.
+The gate decides reads and writes alike, inside the agent's working
+directories or not. The tools that read (Read, Glob, Grep, Artifact files to
+publish) take any path the process can read; the tools that write take any
+path the process can write. `ToolCall::writes` lists what a call would create
+or change (`Tool::written_paths`): Edit's and Write's `file_path`,
+NotebookEdit's `notebook_path`, the folder an Artifact `read` with `path` or
+`paths` saves into (`out_dir`), and `<out_dir>/<collection>` for an
+ArtifactData `get`, `list` or `query` (the agent's scratch folder, the
+default, is left out: saving there is the tool's own). Each `WriteTarget`
+has the absolute `path` and `inside`: whether it lands inside the agent's
+working directories (or one of the engine's files it may write, a session's
+workflow scripts), judged by the path as written and by where its symlinks
+lead, so a link inside the roots to a folder outside them is outside.
+`ToolCall::writes_outside()` tells whether any lands outside. A host whose
+modes accept edits without asking should accept only those with
+`writes_outside()` false and ask about the rest; the bundled `ReadOnly` gate refuses Artifact reads that
+save outside. A shell command's writes are not listed (the sandbox, when
+on, bounds them).
+
+Two rules hold whatever the gate answers, and a call that breaks one is
+refused before the gate is asked:
+
+- An agent isolated in its own worktree (a subagent started with
+  `isolation: "worktree"`, a workflow `agent()` with `isolation:
+  'worktree'`) writes only inside its working directories and the engine's
+  writable files, so agents working in parallel cannot write over each
+  other's files: `<path> is outside this agent's working directories.` The
+  plain subagents it starts are held the same way; a plain subagent of an
+  agent that is not isolated is not. `Workspace::is_confined()` tells.
+- No tool writes a protected path outside the agent's working directories:
+  the data dir, the workflow folder, and whatever the host adds with
+  `SdkBuilder::protect_from_writes(path)` (its own data, sign-in stores):
+  `<path> is in the agent engine's own files, which tools do not write.`
+  The engine's writable files there (a session's workflow scripts) stay
+  writable.
+
+Read-before-write and the other checks of the write tools apply outside the
+working directories as inside them.
 
 ## Changing a live agent
 

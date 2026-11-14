@@ -45,24 +45,27 @@ pub(crate) fn workspace(ctx: &ToolContext<'_>) -> Res<Arc<Workspace>> {
 /// cwd). A read may go anywhere the process can read: the permission gate,
 /// which saw the call, decides.
 pub(crate) fn resolve(ws: &Workspace, raw: &str) -> PathBuf {
-    let expanded = match raw.strip_prefix('~') {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => match std::env::var_os("HOME") {
-            Some(home) => PathBuf::from(home).join(rest.trim_start_matches('/')),
-            None => PathBuf::from(raw),
-        },
-        _ => PathBuf::from(raw),
-    };
-    ws.resolve(&expanded)
+    ws.resolve_user(raw)
 }
 
-/// [`resolve`] for a path the tool writes: refused outside the agent's roots
-/// and the engine's own files it may write.
+/// [`resolve`] for a path the tool writes. Anywhere the process can write
+/// (the permission gate, which saw the path, decides), except where the
+/// workspace refuses: outside the roots for an agent confined to its
+/// worktree, and protected paths.
 pub(crate) fn resolve_write(ws: &Workspace, raw: &str) -> Res<PathBuf> {
     let path = resolve(ws, raw);
-    if !ws.may_write(&path) {
-        return Err(Fail(format!("{} is outside this agent's working directories.", path.display())));
+    match ws.write_refusal(&path) {
+        Some(refusal) => Err(Fail(refusal)),
+        None => Ok(path),
     }
-    Ok(path)
+}
+
+/// The path in `field` a tool writes, resolved as the tool resolves it
+/// ([`Tool::written_paths`](eos_agent_core::Tool::written_paths)).
+pub(crate) fn written(input: &RawValue, extensions: &Extensions, field: &str) -> Vec<PathBuf> {
+    let Some(ws) = extensions.get::<Workspace>() else { return Vec::new() };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(input.get()) else { return Vec::new() };
+    value.get(field).and_then(serde_json::Value::as_str).map(|raw| vec![resolve(&ws, raw)]).unwrap_or_default()
 }
 
 /// The input with its path `field` absolute, for the permission gate; `None`
@@ -175,6 +178,18 @@ mod tests {
         assert_eq!(shown(r#"{"pattern":"*.rs"}"#, "path"), None);
         assert_eq!(shown(r#"{"file_path":"a"}"#, "file_path").as_deref(), Some(r#"{"file_path":"/w/p/a"}"#));
         assert_eq!(shown(r#"{"file_path":"a"}"#, "file_path"), shown(r#"{"file_path":"./a"}"#, "file_path"));
+    }
+
+    #[test]
+    fn written_paths_are_absolute() {
+        let ext = Extensions::default();
+        ext.insert(Workspace::new("/w/p".into(), vec![], "/tmp/s".into()));
+        let paths = |json: &str| written(&RawValue::from_string(json.to_owned()).expect("json"), &ext, "file_path");
+        assert_eq!(paths(r#"{"file_path":"../x/a.txt"}"#), [PathBuf::from("/w/x/a.txt")]);
+        assert_eq!(paths(r#"{"content":"x"}"#), Vec::<PathBuf>::new());
+        if let Some(home) = std::env::var_os("HOME").filter(|h| Path::new(h).is_absolute()) {
+            assert_eq!(paths(r#"{"file_path":"~/a.txt"}"#), [PathBuf::from(home).join("a.txt")]);
+        }
     }
 
     #[test]

@@ -280,7 +280,7 @@ async fn run_files_are_readable_and_agents_unlisted() {
     let (journal, error) = got("toolu_jr");
     assert!(!error, "{journal}");
     let (write, error) = got("toolu_jw");
-    assert!(error && write.contains("outside this agent's working directories"), "{write}");
+    assert!(error && write.contains("is in the agent engine's own files, which tools do not write."), "{write}");
 }
 
 /// Claude Code's folder for the project under the data dir.

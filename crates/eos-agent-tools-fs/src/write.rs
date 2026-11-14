@@ -1,10 +1,13 @@
 //! The Write tool: creates a file or replaces one the agent has fully read.
 
-use eos_agent_core::{BoxFuture, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use eos_agent_core::{BoxFuture, Extensions, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
-use crate::common::{Fail, Res, blocking, finish, parse_input, resolve_write, workspace};
+use crate::common::{Fail, Res, blocking, finish, parse_input, resolve_write, with_absolute, workspace, written};
 use crate::edit::{MODIFIED_SINCE_READ, NO_NEED_TO_REREAD, NOT_READ, store};
 use crate::patch::{Hunk, structured_patch};
 use crate::spec::tool_spec;
@@ -34,6 +37,14 @@ impl Default for WriteTool {
 impl Tool for WriteTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn observable_input(&self, input: &RawValue, extensions: &Extensions) -> Option<Arc<RawValue>> {
+        with_absolute(input, extensions, "file_path")
+    }
+
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<PathBuf> {
+        written(input, extensions, "file_path")
     }
 
     fn call<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, ToolOutput> {

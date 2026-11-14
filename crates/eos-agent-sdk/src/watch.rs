@@ -131,6 +131,7 @@ impl WatchNotifier for AgentNotes {
                 review: None,
                 workspace: None,
                 origin: None,
+                writes: &[],
             };
             self.gate.decide(call).await.is_allowed()
         })

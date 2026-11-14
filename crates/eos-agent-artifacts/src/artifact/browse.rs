@@ -141,7 +141,7 @@ async fn read_paths(
         c.boot(slug).await.map_err(|e| explain("Reading the artifact", e))?.ok_or("the artifact was not found")?;
     let token = boot.asset_token.clone().ok_or("this account may not read the artifact's content")?;
     let dir = match out_dir {
-        Some(d) => files::writable_dir(ws, Path::new(d)).await?,
+        Some(d) => files::writable_dir(ws, d).await?,
         None => files::artifact_dir(ws, slug),
     };
     let mut out = Vec::new();

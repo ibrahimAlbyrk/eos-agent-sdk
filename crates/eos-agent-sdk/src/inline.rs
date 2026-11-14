@@ -66,6 +66,7 @@ impl CommandRunner for ShellRunner {
                 review: None,
                 workspace: workspace.as_deref(),
                 origin: origin.as_deref(),
+                writes: &[],
             };
             let input = match shell.gate.decide(request).await {
                 Permission::Allow => input,

@@ -45,6 +45,16 @@ struct DecideParams<'a> {
     parent_tool_use_id: Option<&'a str>,
     subagent: bool,
     workflow: bool,
+    /// The paths the call would create or change, absolute, each inside the
+    /// agent's working directories or not.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    writes: Vec<WriteParam<'a>>,
+}
+
+#[derive(Serialize)]
+struct WriteParam<'a> {
+    path: &'a std::path::Path,
+    inside: bool,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +82,7 @@ impl PermissionGate for ClientGate {
                 parent_tool_use_id: call.origin.and_then(|o| o.tool_use_id.as_deref()),
                 subagent: call.origin.is_some(),
                 workflow: call.in_workflow(),
+                writes: call.writes.iter().map(|w| WriteParam { path: &w.path, inside: w.inside }).collect(),
             };
             let Ok(params) = serde_json::to_string(&params) else { return Permission::Deny(REJECTED.into()) };
             let answer = self.peer.request("permission.decide", &params, self.timeout).await;

@@ -155,6 +155,7 @@ pub(super) fn fresh(services: &Services, parent: &Blueprint, request: &SubagentR
         task_events: parent.task_events.clone(),
         sandbox: parent.sandbox.clone(),
         internal: parent.internal.clone(),
+        confined: parent.confined,
         interactive: parent.interactive,
         connecting: None,
         mcp_tools: None,

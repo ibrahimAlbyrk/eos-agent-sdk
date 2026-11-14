@@ -176,7 +176,11 @@ impl SdkAgent {
         let roots = blueprint.as_ref().map(|b| b.roots.clone()).unwrap_or_default();
         let session = blueprint.as_ref().map_or_else(|| self.handle.id().to_owned(), |b| b.task_list.to_string());
         let scratch = self.services.data_dir.join("scratch").join(self.handle.id());
-        extensions.insert(Workspace::new(self.project.cwd.clone(), roots, scratch));
+        let confined = blueprint.as_ref().is_some_and(|b| b.confined);
+        let workspace = Workspace::new(self.project.cwd.clone(), roots, scratch)
+            .confined(confined)
+            .with_protected(self.services.protected.clone());
+        extensions.insert(workspace);
         extensions.insert(eos_agent_artifacts::ArtifactSession(session));
         if let Some(policy) = self.project.policy() {
             extensions.insert(eos_agent_tools_shell::AgentSandbox(Arc::clone(policy)));

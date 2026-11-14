@@ -471,15 +471,26 @@ The client answers with a normal JSON-RPC response carrying the same `id`.
 
 ### `permission.decide`
 
-Sent before every tool call when `permissions` is `"ask"`, reads outside
-the working directories included (this is their only check; writes outside
-them are refused whatever the answer). Read's `file_path` and Glob's and
-Grep's `path` come absolute:
+Sent before every tool call when `permissions` is `"ask"`, reads and writes
+outside the working directories included: the answer is their only check,
+except that an agent isolated in its own worktree (and the plain subagents
+it starts) never writes outside its working directories, and no tool writes
+the engine's data or workflow folders outside them; such a call is refused
+without this request. Read's, Edit's and Write's `file_path`, NotebookEdit's
+`notebook_path`, Glob's and Grep's `path` and the Artifact tools' `out_dir`
+come absolute (`~` expanded):
 
 ```json
 {"agentId": "…", "toolUseId": "toolu_…", "tool": "Write", "input": {"file_path": "/x", "content": "…"}, "sandboxed": false,
- "rootAgentId": "…", "parentAgentId": "…", "parentToolUseId": "toolu_…", "subagent": true, "workflow": false}
+ "rootAgentId": "…", "parentAgentId": "…", "parentToolUseId": "toolu_…", "subagent": true, "workflow": false,
+ "writes": [{"path": "/x", "inside": false}]}
 ```
+
+`writes` (absent when empty) lists the files and folders the call would
+create or change, absolute; `inside` is whether one lands inside the agent's
+working directories, judged by the path and by where its symlinks lead. A
+client that accepts edits without asking should accept only those whose
+`writes` are all inside.
 
 `rootAgentId` is the top-level agent of the caller's tree (the caller itself
 when no agent started it). For a subagent (`subagent: true`), `parentAgentId`

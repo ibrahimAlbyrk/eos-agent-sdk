@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -206,6 +207,16 @@ pub trait Tool: Send + Sync + 'static {
     /// answers with another.
     fn observable_input(&self, _input: &RawValue, _extensions: &Extensions) -> Option<Arc<RawValue>> {
         None
+    }
+
+    /// The absolute paths this call would create or change, resolved as the
+    /// tool resolves them (relative ones from the cwd, `~` expanded). The
+    /// permission gate sees each, marked inside or outside the agent's
+    /// working directories ([`ToolCall::writes`](crate::ToolCall::writes)),
+    /// and a call that would write a path its agent may not is refused
+    /// before the gate is asked ([`Workspace::write_refusal`](crate::Workspace::write_refusal)).
+    fn written_paths(&self, _input: &RawValue, _extensions: &Extensions) -> Vec<PathBuf> {
+        Vec::new()
     }
 
     /// What the permission gate should review for this call, when it is not

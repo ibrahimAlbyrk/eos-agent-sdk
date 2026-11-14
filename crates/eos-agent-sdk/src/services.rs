@@ -100,6 +100,9 @@ pub(crate) struct Services {
     pub(crate) tool_change_refusals: Arc<eos_agent_core::ToolChangeRefusals>,
     /// Late tools carry their definitions (Claude Code's inline tools).
     pub(crate) inline_tools: bool,
+    /// Paths no tool writes outside an agent's roots: the data dir, the
+    /// workflow folder and the host's.
+    pub(crate) protected: Vec<PathBuf>,
 }
 
 /// Claude Code's `Bon`: inline tools unless `CLAUDE_CODE_INLINE_TOOLS` turns

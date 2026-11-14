@@ -28,6 +28,7 @@ pub struct SdkBuilder {
     pub(super) spawn_limits: Option<SpawnLimits>,
     pub(super) inline_tools: Option<bool>,
     pub(super) task_list_retention: Option<Duration>,
+    pub(super) protected: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for SdkBuilder {
@@ -82,6 +83,7 @@ impl Default for SdkBuilder {
             spawn_limits: None,
             inline_tools: None,
             task_list_retention: None,
+            protected: Vec::new(),
         }
     }
 }
@@ -184,6 +186,15 @@ impl SdkBuilder {
     /// Task lists, shell snapshots and agents' scratch space (default: a folder in the temp dir).
     pub fn data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
+        self
+    }
+
+    /// A folder (or file) no tool writes outside an agent's working
+    /// directories, whatever the permission gate allows: the host's own data,
+    /// sign-in stores. The data dir and the workflow folder are always
+    /// protected. Writes elsewhere are the gate's to decide.
+    pub fn protect_from_writes(mut self, path: impl Into<PathBuf>) -> Self {
+        self.protected.push(path.into());
         self
     }
 

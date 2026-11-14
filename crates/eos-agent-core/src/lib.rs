@@ -44,7 +44,9 @@ pub use subagents::{
 pub use tasks::{BackgroundTask, BackgroundTasks, TaskEvent, TaskEventKind, TaskEvents, TaskStatus, TaskUsage};
 pub use tool::{Tool, ToolContext, ToolOutput, ToolReview, ToolSpec, Toolbox};
 pub use wake::{TaskNotices, Wake};
-pub use workspace::{AgentIdent, FileStamp, FileStates, InternalPaths, Reminders, Workspace, content_hash};
+pub use workspace::{
+    AgentIdent, FileStamp, FileStates, InternalPaths, Reminders, Workspace, WriteTarget, content_hash,
+};
 
 pub use tokio_util::sync::CancellationToken;
 

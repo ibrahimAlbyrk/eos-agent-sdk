@@ -3,13 +3,17 @@
 mod json;
 
 use std::hash::{BuildHasher, Hasher};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use eos_agent_core::{BoxFuture, FileStates, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
+use eos_agent_core::{BoxFuture, Extensions, FileStates, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use self::json::Json;
-use crate::common::{Fail, Res, blocking, finish, format_bytes, mtime_ms, parse_input, resolve_write, workspace};
+use crate::common::{
+    Fail, Res, blocking, finish, format_bytes, mtime_ms, parse_input, resolve_write, with_absolute, workspace, written,
+};
 use crate::edit::{MODIFIED_SINCE_READ, NOT_READ, store};
 use crate::read::{MAX_NOTEBOOK_FILE, NOT_A_NOTEBOOK, too_big_message};
 use crate::spec::tool_spec;
@@ -37,6 +41,14 @@ impl Default for NotebookEditTool {
 impl Tool for NotebookEditTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn observable_input(&self, input: &RawValue, extensions: &Extensions) -> Option<Arc<RawValue>> {
+        with_absolute(input, extensions, "notebook_path")
+    }
+
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<PathBuf> {
+        written(input, extensions, "notebook_path")
     }
 
     fn call<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, ToolOutput> {

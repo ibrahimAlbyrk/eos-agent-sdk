@@ -9,7 +9,7 @@ use crate::message::StoredMessage;
 use crate::model::RateLimitInfo;
 use crate::subagents::AgentOrigin;
 use crate::tool::{ToolOutput, ToolReview};
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WriteTarget};
 
 /// What the loop tells the host while it runs.
 #[derive(Debug, Clone)]
@@ -137,6 +137,11 @@ pub struct ToolCall<'a> {
     /// Who started the calling agent: `None` for a top-level agent, set for
     /// a subagent (a workflow's agents included).
     pub origin: Option<&'a AgentOrigin>,
+    /// The files and folders the call would create or change, absolute, each
+    /// marked inside or outside the agent's working directories; see
+    /// [`Tool::written_paths`](crate::Tool::written_paths). Empty for a call
+    /// that writes no path it names (a shell command included).
+    pub writes: &'a [WriteTarget],
 }
 
 impl ToolCall<'_> {
@@ -144,6 +149,11 @@ impl ToolCall<'_> {
     /// other agent started it).
     pub fn root_id(&self) -> &str {
         self.origin.map_or(self.agent_id, |o| &o.root_id)
+    }
+
+    /// The call would write somewhere outside the agent's working directories.
+    pub fn writes_outside(&self) -> bool {
+        self.writes.iter().any(|w| !w.inside)
     }
 
     /// The call comes from a workflow run's agent, or from an agent one of

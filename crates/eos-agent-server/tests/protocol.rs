@@ -77,6 +77,8 @@ async fn permissions_and_questions_go_to_the_client() {
     assert_eq!(decide["rootAgentId"], agent.as_str());
     assert_eq!((&decide["subagent"], &decide["workflow"]), (&json!(false), &json!(false)));
     assert!(decide.get("parentAgentId").is_none(), "a top-level agent has no parent");
+    assert_eq!(decide["writes"], json!([{"path": "/tmp/eos-server-never.txt", "inside": false}]));
+    assert!(client.asked[1]["params"].get("writes").is_none(), "AskUserQuestion writes nothing");
     assert!(request_text(&mock, 1).contains("No writes today."));
     assert!(!std::path::Path::new("/tmp/eos-server-never.txt").exists());
     assert!(request_text(&mock, 2).contains(r#"\"Which one?\"=\"A\""#), "{}", request_text(&mock, 2));

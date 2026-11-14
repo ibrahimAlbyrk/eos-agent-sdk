@@ -6,9 +6,12 @@ mod publish;
 mod quickstart;
 mod restore;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use eos_agent_core::{AgentIdent, BoxFuture, Extensions, StoredMessage, Tool, ToolContext, ToolOutput, ToolSpec};
+use eos_agent_core::{
+    AgentIdent, BoxFuture, Extensions, StoredMessage, Tool, ToolContext, ToolOutput, ToolSpec, Workspace,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -119,6 +122,24 @@ impl ArtifactTool {
 impl Tool for ArtifactTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn observable_input(&self, input: &RawValue, extensions: &Extensions) -> Option<Arc<RawValue>> {
+        crate::files::with_absolute_out_dir(input, extensions)
+    }
+
+    /// Reading an artifact's files with `out_dir` saves them there.
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<PathBuf> {
+        let (Some(ws), Ok(input)) = (extensions.get::<Workspace>(), serde_json::from_str::<Input>(input.get())) else {
+            return Vec::new();
+        };
+        let reads_files = input.path.is_some() || input.paths.as_ref().is_some_and(|p| !p.is_empty());
+        match (input.action.as_deref(), &input.url, input.out_dir.as_deref()) {
+            (Some("read"), Some(_), Some(dir)) if reads_files => {
+                crate::files::out_dir_written(&ws, dir).into_iter().collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn is_concurrency_safe(&self, input: &RawValue) -> bool {

@@ -11,8 +11,9 @@ use serde_json::Value;
 
 use crate::registry::Registry;
 
-/// Denies file writers, shell commands not known to be read-only, and
-/// Artifact actions other than reading; allows everything else.
+/// Denies file writers, shell commands not known to be read-only, Artifact
+/// actions other than reading, and reads that save files outside the
+/// working directories; allows everything else.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReadOnly;
 
@@ -25,9 +26,10 @@ fn allowed(call: &ToolCall<'_>) -> bool {
     match call.name {
         "Write" | "Edit" | "NotebookEdit" => false,
         "Bash" | "Monitor" => field("command").is_some_and(|c| is_read_only_command(&c)),
-        "Artifact" => field("action").is_some_and(|a| matches!(a.as_str(), "read" | "list")),
+        "Artifact" => field("action").is_some_and(|a| matches!(a.as_str(), "read" | "list")) && !call.writes_outside(),
         "ArtifactData" | "ArtifactComments" => {
             field("action").is_some_and(|a| matches!(a.as_str(), "get" | "list" | "query" | "read"))
+                && !call.writes_outside()
         }
         _ => true,
     }
@@ -146,6 +148,7 @@ mod tests {
             review: None,
             workspace: None,
             origin: None,
+            writes: &[],
         })
     }
 

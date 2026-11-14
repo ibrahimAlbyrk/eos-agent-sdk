@@ -2,14 +2,16 @@
 
 mod matching;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use eos_agent_core::{BoxFuture, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
+use eos_agent_core::{BoxFuture, Extensions, Tool, ToolContext, ToolOutput, ToolSpec, content_hash};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::common::{
-    Fail, Res, blocking, finish, format_bytes, missing_file_message, parse_input, resolve_write, workspace,
+    Fail, Res, blocking, finish, format_bytes, missing_file_message, parse_input, resolve_write, with_absolute,
+    workspace, written,
 };
 use crate::fsio::write_atomic;
 use crate::patch::{Hunk, structured_patch};
@@ -44,6 +46,14 @@ impl Default for EditTool {
 impl Tool for EditTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn observable_input(&self, input: &RawValue, extensions: &Extensions) -> Option<Arc<RawValue>> {
+        with_absolute(input, extensions, "file_path")
+    }
+
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<PathBuf> {
+        written(input, extensions, "file_path")
     }
 
     fn call<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, ToolOutput> {

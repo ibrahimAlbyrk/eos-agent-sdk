@@ -5,7 +5,13 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, PoisonError, RwLock};
 
-/// Where an agent works: its current directory and the roots it may touch.
+/// Where an agent works: its current directory and its working directories
+/// (the roots).
+///
+/// Tools read and write anywhere the process can, and the permission gate
+/// decides each call, except that a tool never writes a protected path
+/// outside the roots, and a confined agent (one isolated in its own
+/// worktree) writes only inside its roots and the engine's writable files.
 #[derive(Debug)]
 pub struct Workspace {
     cwd: RwLock<PathBuf>,
@@ -13,6 +19,20 @@ pub struct Workspace {
     /// Scratch space for this agent's spilled outputs and background task logs.
     scratch: PathBuf,
     internal: InternalPaths,
+    confined: bool,
+    protected: Vec<PathBuf>,
+}
+
+/// A path a tool call would create or change, as the permission gate sees
+/// it ([`ToolCall::writes`](crate::ToolCall::writes)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteTarget {
+    /// Absolute, `~` expanded, `.` and `..` resolved; symlinks as written.
+    pub path: PathBuf,
+    /// Inside the agent's working directories (or one of the engine's
+    /// writable files), by the path as written and by where its symlinks
+    /// lead. `false`: the write lands outside them.
+    pub inside: bool,
 }
 
 /// The engine's own files an agent may use outside its roots without asking,
@@ -33,7 +53,36 @@ impl Workspace {
     pub fn new(cwd: PathBuf, extra_roots: Vec<PathBuf>, scratch: PathBuf) -> Self {
         let mut roots = vec![normalize(&cwd)];
         roots.extend(extra_roots.iter().map(|r| normalize(r)));
-        Self { cwd: RwLock::new(normalize(&cwd)), roots, scratch, internal: InternalPaths::default() }
+        Self {
+            cwd: RwLock::new(normalize(&cwd)),
+            roots,
+            scratch,
+            internal: InternalPaths::default(),
+            confined: false,
+            protected: Vec::new(),
+        }
+    }
+
+    /// Confines writes to the roots and the engine's writable files: for an
+    /// agent isolated in its own worktree, so parallel agents cannot write
+    /// over each other's files whatever the permission gate allows.
+    #[must_use]
+    pub fn confined(mut self, confined: bool) -> Self {
+        self.confined = confined;
+        self
+    }
+
+    /// Paths no tool writes outside the roots, whatever the permission gate
+    /// allows (the engine's own data: transcripts, scratch, sign-in stores).
+    #[must_use]
+    pub fn with_protected(mut self, protected: Vec<PathBuf>) -> Self {
+        self.protected = protected.iter().map(|p| normalize(p)).collect();
+        self
+    }
+
+    /// Writes stay inside the roots ([`confined`](Self::confined)).
+    pub fn is_confined(&self) -> bool {
+        self.confined
     }
 
     /// Adds the engine's files the agent may read or write outside its roots.
@@ -68,6 +117,19 @@ impl Workspace {
         &self.scratch
     }
 
+    /// [`resolve`](Self::resolve) for a path as a model writes it: a leading
+    /// `~` is the home folder.
+    pub fn resolve_user(&self, raw: &str) -> PathBuf {
+        let expanded = match raw.strip_prefix('~') {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => match std::env::var_os("HOME") {
+                Some(home) => PathBuf::from(home).join(rest.trim_start_matches('/')),
+                None => PathBuf::from(raw),
+            },
+            _ => PathBuf::from(raw),
+        };
+        self.resolve(&expanded)
+    }
+
     /// Absolute, `.`/`..`-free form of `path`, relative ones taken from the cwd.
     pub fn resolve(&self, path: &Path) -> PathBuf {
         if path.is_absolute() { normalize(path) } else { normalize(&self.cwd().join(path)) }
@@ -87,19 +149,73 @@ impl Workspace {
         self.contains(&path)
             || path.starts_with(normalize(&self.scratch))
             || self.internal.readable.iter().any(|r| path.starts_with(r))
-            || self.may_write_internal(&path)
+            || in_writable(&path, &self.internal.writable)
     }
 
-    /// Inside the roots or one of the engine's writable files.
-    pub fn may_write(&self, path: &Path) -> bool {
+    /// `path` as the permission gate sees a write to it.
+    pub fn write_target(&self, path: &Path) -> WriteTarget {
         let path = self.resolve(path);
-        self.contains(&path) || self.may_write_internal(&path)
+        WriteTarget { inside: self.writes_inside(&path), path }
     }
 
-    fn may_write_internal(&self, path: &Path) -> bool {
-        self.internal.writable.iter().any(|(dir, end)| {
-            path.starts_with(dir) && path != dir.as_path() && path.to_string_lossy().ends_with(end.as_str())
-        })
+    /// Inside the roots or one of the engine's writable files, both as
+    /// written and where the path's symlinks lead (a link inside the roots
+    /// to a folder outside them is outside). Reads the filesystem.
+    pub fn writes_inside(&self, path: &Path) -> bool {
+        let path = self.resolve(path);
+        if !(self.contains(&path) || in_writable(&path, &self.internal.writable)) {
+            return false;
+        }
+        let real = real_path(&path);
+        let roots: Vec<PathBuf> = self.roots.iter().map(|r| real_path(r)).collect();
+        let writable: Vec<(PathBuf, String)> =
+            self.internal.writable.iter().map(|(dir, end)| (real_path(dir), end.clone())).collect();
+        roots.iter().any(|r| real.starts_with(r)) || in_writable(&real, &writable)
+    }
+
+    /// Why a tool may not write `path`, or `None` when it may (the
+    /// permission gate has decided by then). A protected path outside the
+    /// roots is refused, and so is anything outside them for a confined agent.
+    pub fn write_refusal(&self, path: &Path) -> Option<String> {
+        let path = self.resolve(path);
+        if self.writes_inside(&path) {
+            return None;
+        }
+        if self.confined {
+            return Some(format!("{} is outside this agent's working directories.", path.display()));
+        }
+        let real = real_path(&path);
+        let protected = self.protected.iter().any(|p| path.starts_with(p) || real.starts_with(real_path(p)));
+        protected.then(|| format!("{} is in the agent engine's own files, which tools do not write.", path.display()))
+    }
+
+    /// [`write_refusal`](Self::write_refusal) finds nothing against it.
+    pub fn may_write(&self, path: &Path) -> bool {
+        self.write_refusal(path).is_none()
+    }
+}
+
+/// One of the engine's writable files: in `dir` (or below), with the name ending.
+fn in_writable(path: &Path, writable: &[(PathBuf, String)]) -> bool {
+    writable.iter().any(|(dir, end)| {
+        path.starts_with(dir) && path != dir.as_path() && path.to_string_lossy().ends_with(end.as_str())
+    })
+}
+
+/// Where `path` leads: its nearest existing ancestor with symlinks resolved,
+/// the rest as written (a dangling link at the end is replaced, not followed).
+fn real_path(path: &Path) -> PathBuf {
+    let mut probe = path.to_path_buf();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(&probe) {
+            return match path.strip_prefix(&probe) {
+                Ok(rest) if !rest.as_os_str().is_empty() => real.join(rest),
+                _ => real,
+            };
+        }
+        if !probe.pop() {
+            return path.to_path_buf();
+        }
     }
 }
 
@@ -234,12 +350,71 @@ mod tests {
         assert!(ws.readable_unasked(Path::new("/data/scratch/a1/tool-results/t.txt")));
         assert!(ws.readable_unasked(Path::new("/data/s1/subagents/workflows/wf_1/journal.jsonl")));
         assert!(!ws.readable_unasked(Path::new("/data/s2/x")));
-        assert!(!ws.may_write(Path::new("/data/s1/subagents/workflows/wf_1/journal.jsonl")));
-        assert!(ws.may_write(Path::new("/data/s1/workflows/scripts/demo-wf_1.js")));
-        assert!(!ws.may_write(Path::new("/data/s1/workflows/scripts/demo.txt")));
-        assert!(!ws.may_write(Path::new("/data/s1/workflows/scripts/../x.js")));
-        assert!(!ws.may_write(Path::new("/data/scratch/a1/t.txt")));
-        assert!(ws.may_write(Path::new("/work/proj/x")));
+        assert!(!ws.writes_inside(Path::new("/data/s1/subagents/workflows/wf_1/journal.jsonl")));
+        assert!(ws.writes_inside(Path::new("/data/s1/workflows/scripts/demo-wf_1.js")));
+        assert!(!ws.writes_inside(Path::new("/data/s1/workflows/scripts/demo.txt")));
+        assert!(!ws.writes_inside(Path::new("/data/s1/workflows/scripts/../x.js")));
+        assert!(!ws.writes_inside(Path::new("/data/scratch/a1/t.txt")));
+        assert!(ws.writes_inside(Path::new("/work/proj/x")));
+    }
+
+    #[test]
+    fn writes_are_confined_only_when_isolated() {
+        let free = Workspace::new("/work/proj".into(), vec![], "/tmp/x".into());
+        assert!(free.may_write(Path::new("/work/other/a.txt")));
+        assert_eq!(
+            free.write_target(Path::new("../other/a.txt")),
+            WriteTarget { path: "/work/other/a.txt".into(), inside: false }
+        );
+        assert_eq!(
+            free.write_target(Path::new("a.txt")),
+            WriteTarget { path: "/work/proj/a.txt".into(), inside: true }
+        );
+        let confined = Workspace::new("/work/proj".into(), vec![], "/tmp/x".into()).confined(true);
+        assert_eq!(
+            confined.write_refusal(Path::new("/work/other/a.txt")).as_deref(),
+            Some("/work/other/a.txt is outside this agent's working directories.")
+        );
+        assert!(confined.may_write(Path::new("/work/proj/src/a.rs")));
+    }
+
+    #[test]
+    fn protected_paths_stay_unwritten_outside_the_roots() {
+        let ws = Workspace::new("/data/engine/proj".into(), vec![], "/data/engine/scratch/a1".into())
+            .with_protected(vec!["/data/engine".into()])
+            .with_internal(InternalPaths {
+                readable: vec![],
+                writable: vec![("/data/engine/s1/workflows/scripts".into(), ".js".into())],
+            });
+        assert!(ws.write_refusal(Path::new("/data/engine/transcripts/a1.jsonl")).is_some());
+        assert!(ws.write_refusal(Path::new("/data/engine/scratch/a1/t.txt")).is_some());
+        assert!(ws.may_write(Path::new("/data/engine/s1/workflows/scripts/demo.js")));
+        assert!(ws.may_write(Path::new("/data/engine/proj/src/a.rs")), "the roots win");
+        assert!(ws.may_write(Path::new("/data/other/a.txt")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_judged_by_where_it_leads() {
+        let base = std::env::temp_dir().join(format!("eos-ws-link-{}", std::process::id()));
+        let (proj, outside) = (base.join("proj"), base.join("outside"));
+        std::fs::create_dir_all(&proj).expect("proj");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let _ = std::fs::remove_file(proj.join("out"));
+        std::os::unix::fs::symlink(&outside, proj.join("out")).expect("link");
+        let ws = Workspace::new(proj.clone(), vec![], base.join("scratch"));
+        assert!(ws.writes_inside(&proj.join("a.txt")));
+        assert!(!ws.writes_inside(&proj.join("out/a.txt")), "a link inside to a folder outside is outside");
+        let confined = Workspace::new(proj.clone(), vec![], base.join("scratch")).confined(true);
+        assert!(!confined.may_write(&proj.join("out/a.txt")));
+        let protected =
+            Workspace::new(base.join("elsewhere"), vec![], base.join("scratch")).with_protected(vec![outside.clone()]);
+        assert!(!protected.may_write(&proj.join("out/a.txt")), "protection follows the link");
+        std::fs::write(outside.join("s.js"), "").expect("script");
+        let scripts = Workspace::new(proj.clone(), vec![], base.join("scratch"))
+            .with_internal(InternalPaths { readable: vec![], writable: vec![(outside.clone(), ".js".into())] });
+        assert!(scripts.writes_inside(&outside.join("s.js")), "an existing writable file keeps its name");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

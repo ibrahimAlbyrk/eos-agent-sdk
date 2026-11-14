@@ -20,12 +20,21 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn new() -> Self {
+        Self::with(false)
+    }
+
+    /// An agent confined to its directory (isolated in its own worktree).
+    pub(crate) fn confined() -> Self {
+        Self::with(true)
+    }
+
+    fn with(confined: bool) -> Self {
         let name = format!("eos-fs-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
         let dir = std::env::temp_dir().join(name);
         std::fs::create_dir_all(&dir).expect("temp dir");
         let dir = dir.canonicalize().expect("canonical");
         let ext = Extensions::default();
-        ext.insert(Workspace::new(dir.clone(), vec![], dir.join(".scratch")));
+        ext.insert(Workspace::new(dir.clone(), vec![], dir.join(".scratch")).confined(confined));
         Self { dir, ext, cancel: CancellationToken::new() }
     }
 

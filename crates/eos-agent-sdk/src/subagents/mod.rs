@@ -63,6 +63,9 @@ impl EngineSubagents {
             if request.fork { fork(&parent, &request)? } else { fresh(&services, &parent, &request)? };
         if let Some(project) = project {
             blueprint.project = project;
+            // Isolated in its own worktree: its writes stay there, so agents
+            // working in parallel cannot write over each other's files.
+            blueprint.confined = true;
         }
         // A GPT subagent (a workflow's too) keys its own prompt cache: OpenAI
         // routes by the prefix's start and the key, and a tree on one key

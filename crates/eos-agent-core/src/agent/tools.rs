@@ -12,7 +12,7 @@ use crate::BoxFuture;
 use crate::ports::{AgentEvent, Permission, ToolCall};
 use crate::subagents::AgentOrigin;
 use crate::tool::{ToolContext, ToolOutput};
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WriteTarget};
 
 impl Agent {
     /// Runs the message's tool calls: consecutive concurrency-safe calls
@@ -95,6 +95,15 @@ impl Agent {
         let workspace = self.extensions.get::<Workspace>();
         let origin = self.extensions.get::<AgentOrigin>();
         let observed = tool.observable_input(input, &self.extensions);
+        let writes: Vec<WriteTarget> = match &workspace {
+            Some(ws) => tool.written_paths(input, &self.extensions).iter().map(|p| ws.write_target(p)).collect(),
+            None => Vec::new(),
+        };
+        // A write the agent may not make whatever the gate says (confined to
+        // its worktree, or a protected path) is refused before anyone is asked.
+        if let Some(refusal) = workspace.as_ref().and_then(|ws| writes.iter().find_map(|w| ws.write_refusal(&w.path))) {
+            return ToolOutput::error(format!("<tool_use_error>{refusal}</tool_use_error>"));
+        }
         let call = ToolCall {
             agent_id: &self.id,
             id,
@@ -104,6 +113,7 @@ impl Agent {
             review: review.as_ref(),
             workspace: workspace.as_deref(),
             origin: origin.as_deref(),
+            writes: &writes,
         };
         let updated = match deps.permissions.decide(call).await {
             Permission::Allow => None,

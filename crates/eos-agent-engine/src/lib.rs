@@ -83,7 +83,11 @@ impl Engine {
             None => agent,
         };
         let scratch = spec.scratch.unwrap_or_else(|| std::env::temp_dir().join("eos-agent").join(&id));
-        agent.extensions().insert(Workspace::new(spec.cwd, spec.roots, scratch).with_internal(spec.internal));
+        let workspace = Workspace::new(spec.cwd, spec.roots, scratch)
+            .with_internal(spec.internal)
+            .confined(spec.confined)
+            .with_protected(spec.protected);
+        agent.extensions().insert(workspace);
         agent.extensions().insert(AgentIdent(id.clone()));
         let (commands, inbox) = mpsc::channel(8);
         let (events_tx, events) = mpsc::channel(EVENT_BUFFER);
@@ -159,6 +163,12 @@ pub struct AgentSpec {
     pub scratch: Option<PathBuf>,
     /// The engine's files the tools may read or write outside the roots.
     pub internal: InternalPaths,
+    /// Writes stay inside the roots and the engine's writable files, whatever
+    /// the permission gate allows: an agent isolated in its own worktree.
+    /// Otherwise the gate decides every write, inside the roots or not.
+    pub confined: bool,
+    /// Paths no tool writes outside the roots, whatever the gate allows.
+    pub protected: Vec<PathBuf>,
     /// State the agent starts with (the engine adds its [`Workspace`]).
     pub extensions: Extensions,
     /// Sent with the first message of a new conversation.
@@ -181,6 +191,8 @@ impl AgentSpec {
             roots: Vec::new(),
             scratch: None,
             internal: InternalPaths::default(),
+            confined: false,
+            protected: Vec::new(),
             extensions: Extensions::default(),
             session: None,
             ready: None,

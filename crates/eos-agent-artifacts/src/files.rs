@@ -1,6 +1,7 @@
 //! Local paths in tool input, resolved through the calling agent's
 //! [`Workspace`]: a file to publish may be anywhere, a folder to save into
-//! only inside its roots and scratch directory.
+//! anywhere the workspace lets the agent write (the permission gate saw it)
+//! or in its scratch directory.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,14 +10,6 @@ use eos_agent_core::{ToolContext, Workspace};
 
 pub(crate) fn workspace(ctx: &ToolContext<'_>) -> Result<Arc<Workspace>, String> {
     ctx.extensions.get::<Workspace>().ok_or_else(|| "this agent has no workspace, so no local file can be used".into())
-}
-
-async fn writable_roots(ws: &Workspace) -> Vec<PathBuf> {
-    let mut out = Vec::with_capacity(ws.roots().len() + 1);
-    for root in ws.roots().iter().map(PathBuf::as_path).chain([ws.scratch()]) {
-        out.push(canonical_lenient(root).await.unwrap_or_else(|| root.to_owned()));
-    }
-    out
 }
 
 /// `path` with its nearest existing ancestor's symlinks resolved, so a path
@@ -45,19 +38,45 @@ pub(crate) async fn existing_file(ws: &Workspace, raw: &str) -> Result<PathBuf, 
     Ok(real)
 }
 
-/// A directory to write into (created if missing), inside the workspace.
-pub(crate) async fn writable_dir(ws: &Workspace, raw: &Path) -> Result<PathBuf, String> {
-    let path = ws.resolve(raw);
-    let roots = writable_roots(ws).await;
+/// A directory to write into (created if missing): the agent's scratch
+/// directory, or anywhere the workspace lets it write.
+pub(crate) async fn writable_dir(ws: &Workspace, raw: &str) -> Result<PathBuf, String> {
+    let path = ws.resolve_user(raw);
     let real = canonical_lenient(&path).await.ok_or_else(|| format!("{} can't be resolved", path.display()))?;
-    if !roots.iter().any(|r| real.starts_with(r)) {
-        return Err(format!(
-            "{} is outside this agent's working directories, so nothing was saved there",
-            path.display()
-        ));
+    let scratch = canonical_lenient(ws.scratch()).await.unwrap_or_else(|| ws.scratch().to_owned());
+    if !real.starts_with(&scratch)
+        && let Some(refusal) = ws.write_refusal(&path)
+    {
+        return Err(format!("{refusal} Nothing was saved there."));
     }
     tokio::fs::create_dir_all(&real).await.map_err(|e| format!("{}: {e}", real.display()))?;
     Ok(real)
+}
+
+/// The folder `out_dir` names, for the permission gate, unless it is in
+/// the agent's scratch directory (saving there needs no approval).
+pub(crate) fn out_dir_written(ws: &Workspace, raw: &str) -> Option<PathBuf> {
+    let path = ws.resolve_user(raw);
+    let scratch = std::fs::canonicalize(ws.scratch()).unwrap_or_else(|_| ws.scratch().to_owned());
+    let real = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    (!path.starts_with(ws.scratch()) && !real.starts_with(&scratch)).then_some(path)
+}
+
+/// The input with `out_dir` absolute, for the permission gate; `None` when
+/// it already is, has none, or the agent has no workspace.
+pub(crate) fn with_absolute_out_dir(
+    input: &serde_json::value::RawValue,
+    extensions: &eos_agent_core::Extensions,
+) -> Option<Arc<serde_json::value::RawValue>> {
+    let ws = extensions.get::<Workspace>()?;
+    let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(input.get()).ok()?;
+    let raw = value.get("out_dir")?.as_str()?;
+    let path = ws.resolve_user(raw).to_str()?.to_owned();
+    if path == raw {
+        return None;
+    }
+    value.insert("out_dir".to_owned(), serde_json::Value::String(path));
+    serde_json::value::RawValue::from_string(serde_json::to_string(&value).ok()?).ok().map(Arc::from)
 }
 
 /// Where a read of `slug` is saved by default.
@@ -141,6 +160,36 @@ pub(crate) fn extension_for(content_type: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn saving_goes_where_the_workspace_lets_the_agent_write() {
+        let base = std::env::temp_dir().join(format!("eos-artifact-dirs-{}", std::process::id()));
+        let (proj, scratch, out) = (base.join("proj"), base.join("scratch"), base.join("out"));
+        let free = Workspace::new(proj.clone(), vec![], scratch.clone());
+        let confined = Workspace::new(proj.clone(), vec![], scratch.clone()).confined(true);
+        let raw = out.join("docs").display().to_string();
+        assert!(writable_dir(&free, &raw).await.is_ok());
+        let refused = writable_dir(&confined, &raw).await.expect_err("confined");
+        assert!(
+            refused.ends_with("is outside this agent's working directories. Nothing was saved there."),
+            "{refused}"
+        );
+        let in_scratch = scratch.join("artifacts/a").display().to_string();
+        assert!(writable_dir(&confined, &in_scratch).await.is_ok(), "its scratch directory is its own");
+        assert_eq!(out_dir_written(&free, "../out"), Some(base.join("out")));
+        assert_eq!(out_dir_written(&free, &in_scratch), None, "saving to scratch needs no approval");
+
+        let ext = eos_agent_core::Extensions::default();
+        ext.insert(free);
+        let input =
+            serde_json::value::RawValue::from_string(r#"{"action":"read","out_dir":"../out"}"#.into()).expect("json");
+        let shown = with_absolute_out_dir(&input, &ext).expect("absolute");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(shown.get()).expect("json")["out_dir"],
+            out.display().to_string()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn published_paths_stay_inside() {

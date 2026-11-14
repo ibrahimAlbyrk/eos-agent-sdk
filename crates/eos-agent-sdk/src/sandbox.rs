@@ -125,6 +125,10 @@ impl Tool for SandboxSchema {
         self.inner.observable_input(input, extensions)
     }
 
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<std::path::PathBuf> {
+        self.inner.written_paths(input, extensions)
+    }
+
     fn review<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, Option<ToolReview>> {
         self.inner.review(input, ctx)
     }

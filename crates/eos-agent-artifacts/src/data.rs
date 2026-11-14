@@ -1,11 +1,11 @@
 //! The `ArtifactData` tool: an artifact page's shared database, read and
 //! written as the user through `POST /api/frame/db/agent`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use eos_agent_core::{BoxFuture, Tool, ToolContext, ToolOutput, ToolSpec, Workspace};
+use eos_agent_core::{BoxFuture, Extensions, Tool, ToolContext, ToolOutput, ToolSpec, Workspace};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value, json};
@@ -316,7 +316,7 @@ async fn document(
 async fn save_docs(answer: &Value, input: &Input, dir: &str, ctx: &ToolContext<'_>) -> Result<String, String> {
     let ws: Arc<Workspace> = files::workspace(ctx)?;
     let collection = input.collection.as_deref().unwrap_or_default();
-    let base = files::writable_dir(&ws, &Path::new(dir).join(collection)).await?;
+    let base = files::writable_dir(&ws, &Path::new(dir).join(collection).to_string_lossy()).await?;
     let docs: Vec<Value> = match answer["docs"].as_array() {
         Some(docs) => docs.clone(),
         None if answer["exists"] == Value::Bool(true) => {
@@ -358,6 +358,24 @@ fn idempotency_key() -> String {
 impl Tool for ArtifactDataTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn observable_input(&self, input: &RawValue, extensions: &Extensions) -> Option<Arc<RawValue>> {
+        crate::files::with_absolute_out_dir(input, extensions)
+    }
+
+    /// A read with `out_dir` saves the documents under `<out_dir>/<collection>`.
+    fn written_paths(&self, input: &RawValue, extensions: &Extensions) -> Vec<PathBuf> {
+        let (Some(ws), Ok(input)) = (extensions.get::<Workspace>(), serde_json::from_str::<Input>(input.get())) else {
+            return Vec::new();
+        };
+        match (input.action.as_str(), input.out_dir.as_deref()) {
+            ("get" | "list" | "query", Some(dir)) => {
+                let dir = Path::new(dir).join(input.collection.as_deref().unwrap_or_default());
+                files::out_dir_written(&ws, &dir.to_string_lossy()).into_iter().collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn is_concurrency_safe(&self, input: &RawValue) -> bool {

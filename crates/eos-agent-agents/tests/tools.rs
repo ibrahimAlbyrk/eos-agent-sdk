@@ -435,8 +435,14 @@ fn captured_tool_definitions() {
     // ListAgents and SendMessage say what this engine offers: agents of the session only.
     let ours: [Box<dyn Tool>; 1] = [Box::new(AgentTool::new(fake, definitions()))];
     for tool in ours {
-        let spec: serde_json::Value = serde_json::from_slice(tool.spec().json()).expect("spec json");
-        let theirs = tools.iter().find(|t| t["name"] == spec["name"]).expect("captured");
+        let mut spec: serde_json::Value = serde_json::from_slice(tool.spec().json()).expect("spec json");
+        let mut theirs = tools.iter().find(|t| t["name"] == spec["name"]).expect("captured").clone();
+        // The deprecated parameters say only what holds here.
+        for schema in [&mut spec["input_schema"], &mut theirs["input_schema"]] {
+            for field in ["team_name", "mode"] {
+                schema["properties"][field]["description"].take();
+            }
+        }
         assert_eq!(spec["description"], theirs["description"]);
         assert_eq!(spec["input_schema"], theirs["input_schema"]);
     }
@@ -522,4 +528,22 @@ async fn unsupported_parameters_are_refused_and_names_checked() {
     let ok = call(&agent, &spawn("scout_2"), &Extensions::default()).await;
     assert!(!ok.is_error);
     assert_eq!(fake.requests.lock().expect("lock")[0].name.as_deref(), Some("scout_2"));
+}
+
+/// `team_name` and `mode` are deprecated and ignored, and say so: a call
+/// with them starts the same agent as one without.
+#[tokio::test]
+async fn deprecated_agent_parameters_say_they_are_ignored() {
+    let fake = Arc::new(FakeSubagents::default());
+    let agent = AgentTool::new(fake.clone(), definitions());
+    let schema: serde_json::Value = serde_json::from_slice(agent.spec().json()).expect("json");
+    assert_eq!(schema["input_schema"]["properties"]["team_name"]["description"], "Deprecated; ignored.");
+    let mode = schema["input_schema"]["properties"]["mode"]["description"].as_str().expect("mode");
+    assert!(mode.starts_with("Deprecated; ignored."), "{mode}");
+    let plain = r#"{"description":"d","prompt":"p","name":"helper"}"#;
+    let extra = r#"{"description":"d","prompt":"p","name":"helper","team_name":"t","mode":"plan"}"#;
+    assert!(!call(&agent, plain, &Extensions::default()).await.is_error);
+    assert!(!call(&agent, extra, &Extensions::default()).await.is_error);
+    let requests = fake.requests.lock().expect("lock");
+    assert_eq!(format!("{:?}", requests[0]), format!("{:?}", requests[1]));
 }

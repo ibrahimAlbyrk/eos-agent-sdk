@@ -26,7 +26,7 @@
       "type": "string"
     },
     "mode": {
-      "description": "Deprecated; ignored. Subagents inherit the parent session's permission mode; agent-definition frontmatter may override it.",
+      "description": "Deprecated; ignored. Subagents run under the parent session's permissions.",
       "enum": [
         "acceptEdits",
         "auto",
@@ -65,7 +65,7 @@
       "type": "string"
     },
     "team_name": {
-      "description": "Deprecated; ignored. The session has a single implicit team.",
+      "description": "Deprecated; ignored.",
       "type": "string"
     }
   },

@@ -65,6 +65,27 @@ async fn cd_carries_over_inside_the_roots_only() {
     assert_eq!(ws.cwd(), h.root);
 }
 
+/// As Bash's description says, `cd` carries over only in the main session.
+#[tokio::test]
+async fn a_subagents_cd_does_not_carry_over() {
+    let h = Harness::new();
+    let origin = eos_agent_core::AgentOrigin {
+        root_id: "main".into(),
+        parent_id: "main".into(),
+        tool_use_id: None,
+        workflow: None,
+    };
+    h.ext().insert(origin);
+    let ws = h.workspace();
+    let out = h.call("Bash", json!({"command": "cd sub && echo in"})).await;
+    assert_eq!(text(&out), "in");
+    assert_eq!(ws.cwd(), h.root);
+    let out = h.call("Bash", json!({"command": "cd / && echo out"})).await;
+    assert_eq!(text(&out), "out", "nothing to reset");
+    let out = h.call("Bash", json!({"command": "pwd -P"})).await;
+    assert_eq!(text(&out), h.root.canonicalize().expect("root").display().to_string());
+}
+
 #[tokio::test]
 async fn large_output_spills_to_a_file_with_a_preview() {
     let h = Harness::new();

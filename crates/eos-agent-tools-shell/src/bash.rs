@@ -219,7 +219,10 @@ impl Bash {
         let mut cwd_note = None;
         if let Ok(dir) = tokio::fs::read_to_string(&cwd_file).await {
             let _ = tokio::fs::remove_file(&cwd_file).await;
-            if !dir.trim().is_empty() {
+            // `cd` carries over only in the main session: a subagent's
+            // next call starts where its calls start.
+            let subagent = ctx.extensions.get::<eos_agent_core::AgentOrigin>().is_some();
+            if !subagent && !dir.trim().is_empty() {
                 cwd_note = carry_over(workspace, Path::new(dir.trim())).await;
             }
         }

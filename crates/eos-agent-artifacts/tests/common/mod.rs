@@ -228,6 +228,8 @@ impl Agent {
     pub async fn resume(&mut self, tool: &Arc<dyn Tool>, history: &[eos_agent_core::StoredMessage]) {
         self.ext = Extensions::default();
         self.ext.insert(Workspace::new(self.cwd.clone(), Vec::new(), self.scratch.clone()));
+        // The engine names the agent before its tools rebuild their state.
+        self.ext.insert(eos_agent_core::AgentIdent("a1".into()));
         tool.restore(history, &self.ext).await;
     }
 

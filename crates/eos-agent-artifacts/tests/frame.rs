@@ -96,6 +96,14 @@ async fn design_flow_quickstart_create_fill_and_read() {
         Reply::json(200, json!({ "path": "SKILL.md", "text": "Write project/design.json, then publish it." }))
     });
     mock.on("POST", "/api/frame/deploy/direct", |_| deployed(MADE, "v2", 2));
+    // Before the first fill, only the type's own page is published.
+    mock.once("GET", &format!("/api/frame/{MADE}?via=model_read"), |_| {
+        Reply::json(
+            200,
+            json!({ "ver": "v1", "assetToken": "at", "perm": { "role": "owner" }, "typeInstance": true,
+            "typeSlug": DESIGN_TYPE, "files": [{ "path": "index.html", "src": { "slug": DESIGN_TYPE, "ver": "t1" } }] }),
+        )
+    });
     mock.on("GET", &format!("/api/frame/{MADE}?via=model_read"), |_| {
         Reply::json(
             200,

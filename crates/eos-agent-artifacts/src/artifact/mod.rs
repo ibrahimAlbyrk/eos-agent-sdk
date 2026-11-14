@@ -18,14 +18,13 @@ use serde_json::value::RawValue;
 
 use crate::client::{FrameClient, FrameError};
 use crate::ids;
+use crate::pins::PathPins;
 use crate::targets::{ContractTargets, session_of};
 use crate::watch::ArtifactWatcher;
 
 const DESCRIPTION: &str = include_str!("../../prompts/Artifact.md");
 const SCHEMA: &str = include_str!("../../prompts/Artifact.schema.json");
 
-/// The fields this client acts on; the rest of the schema (`auto_open`,
-/// `prompt`, `page`, `overwrite_unread`) is accepted and has no effect here.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub(crate) struct Input {
     pub action: Option<String>,
@@ -47,6 +46,7 @@ pub(crate) struct Input {
     pub label: Option<String>,
     pub limit: Option<u32>,
     pub out_dir: Option<String>,
+    pub overwrite_unread: Option<Vec<String>>,
     pub path: Option<String>,
     pub paths: Option<Vec<String>>,
     pub pin: Option<bool>,
@@ -58,6 +58,9 @@ pub(crate) struct Input {
     pub type_query: Option<String>,
     pub type_url: Option<String>,
     pub url: Option<String>,
+    /// Set for the publish that fills an artifact created by the same call.
+    #[serde(skip)]
+    pub created_now: bool,
 }
 
 pub struct ArtifactTool {
@@ -65,6 +68,7 @@ pub struct ArtifactTool {
     client: Arc<FrameClient>,
     watcher: Option<ArtifactWatcher>,
     targets: Option<Arc<ContractTargets>>,
+    pins: Arc<PathPins>,
 }
 
 impl std::fmt::Debug for ArtifactTool {
@@ -80,6 +84,7 @@ impl ArtifactTool {
             client,
             watcher: None,
             targets: None,
+            pins: Arc::default(),
         }
     }
 
@@ -100,7 +105,7 @@ impl ArtifactTool {
         let input: Input = serde_json::from_str(input.get()).map_err(|e| format!("invalid input: {e}"))?;
         let c = &self.client;
         let w = self.watcher.as_ref();
-        let t = Target { targets: self.targets.as_deref(), ctx: &ctx };
+        let t = Target { targets: self.targets.as_deref(), pins: &self.pins, ctx: &ctx };
         match input.action.as_deref().unwrap_or("publish") {
             "publish" if input.asset == Some(true) => assets::upload(c, &input, &ctx).await,
             "publish" if input.type_url.is_some() && input.url.is_none() => {
@@ -109,8 +114,8 @@ impl ArtifactTool {
             "publish" => publish::publish(c, w, t, &input, &ctx).await,
             "read" if input.url.is_none() && input.type_url.is_some() => quickstart::describe_type(c, &input).await,
             "read" => browse::read(c, w, t, &input, &ctx).await,
-            "list" => browse::list(c, &input).await,
-            "delete" => browse::delete(c, &input, &ctx).await,
+            "list" => browse::list(c, t, &input).await,
+            "delete" => browse::delete(c, t, &input, &ctx).await,
             "pin" | "unpin" => browse::pin(c, &input).await,
             "open" => browse::open(&input),
             "quickstart" => quickstart::quickstart(c, &input).await,
@@ -167,7 +172,8 @@ impl Tool for ArtifactTool {
 
     fn restore<'a>(&'a self, history: &'a [StoredMessage], extensions: &'a Extensions) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let published = restore::restore(history, extensions).await;
+            let session = extensions.get::<AgentIdent>().map(|a| session_of(extensions, &a.0));
+            let published = restore::restore(history, extensions, &self.pins, session.as_deref()).await;
             // Claude Code re-arms the session's watches when it resumes.
             if let (Some(w), Some(AgentIdent(agent))) = (&self.watcher, extensions.get::<AgentIdent>().as_deref()) {
                 w.attach(agent, extensions);
@@ -185,10 +191,17 @@ impl Tool for ArtifactTool {
 #[derive(Clone, Copy)]
 pub(crate) struct Target<'a> {
     targets: Option<&'a ContractTargets>,
+    /// The published paths each session has seen.
+    pub(crate) pins: &'a PathPins,
     ctx: &'a ToolContext<'a>,
 }
 
 impl Target<'_> {
+    /// The session the calling agent belongs to.
+    pub(crate) fn session(&self) -> String {
+        session_of(self.ctx.extensions, self.ctx.agent_id)
+    }
+
     /// `slug` becomes the target; a `contract` it was published with pins it.
     pub(crate) fn set(&self, slug: &str, contract: Option<&str>) {
         if let Some(t) = self.targets {

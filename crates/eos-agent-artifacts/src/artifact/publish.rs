@@ -1,16 +1,19 @@
 //! `action: "publish"`: a page (plus supporting files) to a new or existing
 //! artifact, or data files to an artifact made from a type.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use eos_agent_core::{ToolContext, Workspace};
 use serde_json::{Map, Value, json};
 use tokio::io::AsyncReadExt;
+use unicode_normalization::UnicodeNormalization;
 
 use super::{Input, browse, explain, saw, slug_of};
 use crate::client::{Deployed, Entry, FrameClient, PublishBody, SourceFile, UploadBatch, cut, error_text};
 use crate::files;
 use crate::ids;
+use crate::pins::{self, Listing, Seen, Touch};
 use crate::state::{ArtifactState, Known};
 use crate::watch::ArtifactWatcher;
 
@@ -46,7 +49,7 @@ pub(super) async fn publish(
     let known = match &slug {
         Some(slug) => match state.get(slug) {
             Some(k) => Some(k),
-            None => return Err(refuse_unread(c, w, ctx, &ws, &state, slug).await),
+            None => return Err(refuse_unread(c, w, t, ctx, &ws, &state, slug).await),
         },
         None => None,
     };
@@ -84,6 +87,31 @@ pub(super) async fn publish(
     if entries.iter().any(|(_, s)| matches!(s, Source::Remove)) && known.is_none() {
         return Err("A `null` entry in `files` removes a file from an existing artifact, and a first publish has nothing to remove, so nothing was published. Drop the `null` entries.".into());
     }
+    // What this publish replaces or removes besides an untyped artifact's
+    // own page (that one is pinned to the version this conversation saw).
+    let touches: Vec<Touch> = entries
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| typed || *i > 0)
+        .map(|(_, (path, source))| match source {
+            Source::Local(f) => Touch::Write { path: path.clone(), sha256: Some(f.sha256.clone()) },
+            Source::Copy(_) => Touch::Write { path: path.clone(), sha256: None },
+            Source::Remove => Touch::Remove(path.clone()),
+        })
+        .collect();
+    if let Some(slug) = slug.as_deref().filter(|_| !input.created_now && !touches.is_empty()) {
+        guard(c, t, slug, &touches, input).await?;
+    }
+    let written: Vec<(String, Option<Seen>)> = entries
+        .iter()
+        .filter_map(|(path, source)| match source {
+            Source::Local(f) => Some((path.clone(), Some(Seen::Sha(f.sha256.clone())))),
+            Source::Copy(_) => Some((path.clone(), None)),
+            Source::Remove => None,
+        })
+        .collect();
+    let removed: Vec<String> =
+        entries.iter().filter(|(_, s)| matches!(s, Source::Remove)).map(|(p, _)| p.clone()).collect();
 
     let title = match input.title.clone() {
         Some(t) => t,
@@ -118,7 +146,7 @@ pub(super) async fn publish(
         200..=299 => serde_json::from_value(answer).map_err(|e| format!("the publish may have gone through, but its answer was unreadable ({e}) — check with action \"list\" before publishing again"))?,
         409 if slug.is_some() => {
             let target = slug.as_deref().unwrap_or_default();
-            let saved = refuse_unread(c, w, ctx, &ws, &state, target).await;
+            let saved = refuse_unread(c, w, t, ctx, &ws, &state, target).await;
             // `{conflict: true, live, author, createdAt, liveEntry}`
             let why = match (answer["live"].as_str(), answer["createdAt"].as_str()) {
                 (Some(live), Some(at)) => format!("version {live} was published at {at}"),
@@ -134,6 +162,7 @@ pub(super) async fn publish(
 
     let typed = typed || deployed.type_instance;
     state.record(&deployed.slug, Known { version: deployed.version.clone(), title: Some(title), typed });
+    t.pins.published(&t.session(), &deployed.slug, &deployed.version, &written, &removed);
     state.bind_path(&local, &deployed.slug);
     t.set(&deployed.slug, contract.as_deref());
     saw(w, ctx, &deployed.slug, &deployed.version, true);
@@ -165,6 +194,42 @@ pub(super) async fn publish(
     out.push_str("\n\n");
     out.push_str(&watch_line(w, ctx, &deployed.slug, &deployed.version));
     Ok(out)
+}
+
+/// Refuses a publish that would replace or remove a published file this
+/// session has not seen as it is now (see [`crate::pins`]); passes a single
+/// page, whose files cannot be listed.
+async fn guard(
+    c: &FrameClient,
+    t: super::Target<'_>,
+    slug: &str,
+    touches: &[Touch],
+    input: &Input,
+) -> Result<(), String> {
+    let session = t.session();
+    let seq = t.pins.ticket();
+    let listing = match c.boot(slug).await {
+        Ok(Some(boot)) => match (boot.ver.as_deref(), &boot.files) {
+            (Some(ver), files) => match Listing::from_boot(ver, files.as_ref()) {
+                Some(listing) => Some(listing),
+                None => return Ok(()),
+            },
+            (None, _) => None,
+        },
+        Ok(None) => return Ok(()),
+        Err(_) => None,
+    };
+    let acknowledged: HashSet<String> = input
+        .overwrite_unread
+        .iter()
+        .flatten()
+        .map(|p| p.nfc().collect::<String>().trim_start_matches("./").to_owned())
+        .collect();
+    let (problems, ver) = t.pins.check(&session, slug, listing.as_ref(), touches, &acknowledged, seq);
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(pins::refusal(&problems, &ver, &ids::viewer_url(slug), listing.as_ref(), input.force == Some(true)))
 }
 
 /// The `contract` a publish sends, as Claude Code picks it: the one passed
@@ -327,12 +392,13 @@ async fn upload(c: &FrameClient, batch: UploadBatch, slug: &str) -> Result<(), S
 async fn refuse_unread(
     c: &FrameClient,
     w: Option<&ArtifactWatcher>,
+    t: super::Target<'_>,
     ctx: &ToolContext<'_>,
     ws: &Workspace,
     state: &ArtifactState,
     slug: &str,
 ) -> String {
-    match browse::fetch_live(c, w, ctx, ws, state, slug).await {
+    match browse::fetch_live(c, w, t, ctx, ws, state, slug).await {
         Ok(live) => format!(
             "Nothing was published: this conversation had not seen the live version of {} ({}). It is saved at {} — build on that file (merge your changes into it) and publish again with the same `url`.",
             ids::viewer_url(slug),

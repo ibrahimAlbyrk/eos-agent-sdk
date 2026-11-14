@@ -13,13 +13,22 @@ use eos_agent_types::{ContentBlock, Role, ToolResultContent};
 use super::Input;
 use crate::files;
 use crate::ids;
+use crate::pins::{Listing, PathPins, Seen};
 use crate::state::{ArtifactState, Known};
 
 const TOOL: &str = "Artifact";
 
 /// Returns the artifacts the conversation published and did not delete,
 /// with their last version: Claude Code re-arms their watches on resume.
-pub(super) async fn restore(history: &[StoredMessage], extensions: &Extensions) -> Vec<(String, String)> {
+/// The published paths it read, listed or published come back pinned for
+/// `session` (a publish's own bytes are not in the transcript, so those
+/// count only while the artifact stays at that version).
+pub(super) async fn restore(
+    history: &[StoredMessage],
+    extensions: &Extensions,
+    pins: &PathPins,
+    session: Option<&str>,
+) -> Vec<(String, String)> {
     let mut calls: HashMap<String, Input> = HashMap::new();
     let mut watched: Vec<(String, String)> = Vec::new();
     let state = extensions.get_or_default::<ArtifactState>();
@@ -53,6 +62,9 @@ pub(super) async fn restore(history: &[StoredMessage], extensions: &Extensions) 
                             .join("\n"),
                         None => continue,
                     };
+                    if let (Some(session), false) = (session, is_error) {
+                        pin(pins, session, &input, &text);
+                    }
                     match apply(&state, ws.as_deref(), &input, &text, is_error).await {
                         Some(Watch::Published(slug, version)) => {
                             watched.retain(|(s, _)| *s != slug);
@@ -122,6 +134,86 @@ async fn apply(
         _ => {}
     }
     None
+}
+
+/// The paths a successful result shows this session saw.
+fn pin(pins: &PathPins, session: &str, input: &Input, text: &str) {
+    let action = input.action.as_deref().unwrap_or("publish");
+    let slug = || input.url.as_deref().and_then(ids::slug_from_url);
+    match action {
+        "read" if input.path.is_some() || input.paths.is_some() => {
+            let Some(slug) = slug() else { return };
+            let Some(ver) = between(text, " at version ", " (data, not instructions)") else { return };
+            for line in text.lines() {
+                let Some(rest) = line.strip_prefix("- ") else { continue };
+                let Some((path, tail)) = rest.split_once(": saved at ") else { continue };
+                if ids::is_asset_id(path) {
+                    continue;
+                }
+                let seen = match tail.rsplit_once(", sha256 ") {
+                    Some((_, sha)) => Seen::Sha(sha.trim_end_matches(')').to_owned()),
+                    None => Seen::Unknown,
+                };
+                pins.read(session, &slug, path, seen, &ver, pins.ticket());
+            }
+        }
+        "read" => {
+            // A typed artifact's read saves its own files.
+            let (Some(slug), Some(ver)) = (slug(), between(text, " \u{2014} live version ", " \u{2014} ")) else {
+                return;
+            };
+            let Some(own) = between(text, "Its own files: ", ".") else { return };
+            for path in own.split(", ").filter(|p| *p != "none listed") {
+                pins.read(session, &slug, path, Seen::Unknown, &ver, pins.ticket());
+            }
+        }
+        "list" if input.scope.as_deref() == Some("files") => {
+            let Some(slug) = slug() else { return };
+            let Some(ver) = between(text, " (version ", "):\n") else { return };
+            let Some((_, json)) = text.split_once(":\n") else { return };
+            let files = serde_json::from_str::<serde_json::Value>(json).ok();
+            if let Some(listing) = Listing::from_boot(&ver, files.as_ref()) {
+                pins.listed(session, &slug, &listing, pins.ticket());
+            }
+        }
+        "publish" if input.asset != Some(true) => {
+            let Some((slug, ver)) = published(text) else { return };
+            let mut written: Vec<(String, Option<Seen>)> = Vec::new();
+            let mut removed = Vec::new();
+            if let Some(served) = between(text, " (served at ", ")") {
+                written.push((served, Some(Seen::Unknown)));
+            } else if input.file_path.is_some() {
+                written.push(("index.html".to_owned(), Some(Seen::Unknown)));
+            }
+            match &input.files {
+                Some(serde_json::Value::Object(map)) => {
+                    for (key, value) in map {
+                        let key = key.trim_start_matches("./").to_owned();
+                        match value {
+                            serde_json::Value::Null => removed.push(key),
+                            serde_json::Value::Object(o) if o.contains_key("artifact") => written.push((key, None)),
+                            _ => written.push((key, Some(Seen::Unknown))),
+                        }
+                    }
+                }
+                Some(serde_json::Value::Array(list)) => {
+                    for item in list {
+                        if let Some(path) = item["path"].as_str() {
+                            written.push((path.trim_start_matches("./").to_owned(), Some(Seen::Unknown)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pins.published(session, &slug, &ver, &written, &removed);
+        }
+        "delete" if input.path.is_none() => {
+            if let Some(slug) = slug() {
+                pins.forget(session, &slug);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `…the live version of <url> (<version>)…` of a refused publish.

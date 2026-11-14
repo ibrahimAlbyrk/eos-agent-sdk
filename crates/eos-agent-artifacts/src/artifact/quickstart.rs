@@ -197,7 +197,7 @@ pub(super) async fn create_from_type(
         super::publish::watch_line(w, ctx, &slug, &version)
     );
     if input.file_path.is_some() {
-        let fill = Input { url: Some(url.clone()), type_url: None, ..input.clone() };
+        let fill = Input { url: Some(url.clone()), type_url: None, created_now: true, ..input.clone() };
         let published = publish::publish(c, w, t, &fill, ctx).await?;
         out.push_str(&format!("\n\n{published}"));
     }

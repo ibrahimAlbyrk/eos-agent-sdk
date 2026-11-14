@@ -60,6 +60,7 @@ mod comments;
 mod data;
 mod files;
 mod ids;
+mod pins;
 mod state;
 mod targets;
 mod watch;

@@ -132,6 +132,12 @@ async fn tasks_persist_with_dependencies() {
     assert_eq!(text(&call_as(&list, "agent-2", &other, "{}").await), "No tasks found");
     other.insert(TaskListId("agent-1".into()));
     assert!(text(&call_as(&list, "agent-2", &other, "{}").await).starts_with("#2 [in_progress] Build"));
+
+    // TaskList points to what TaskGet shows: the description and the
+    // dependencies above (tasks have no comments here).
+    let prompt = String::from_utf8_lossy(list.spec().json()).into_owned();
+    assert!(prompt.contains("view full details including description and dependencies."), "{prompt}");
+    assert!(!prompt.contains("comments"), "{prompt}");
 }
 
 #[tokio::test]

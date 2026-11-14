@@ -17,4 +17,4 @@ Returns a summary of each task:
 - **owner**: Agent ID if assigned, empty if available
 - **blockedBy**: List of open task IDs that must be resolved first (tasks with blockedBy cannot be claimed until dependencies resolve)
 
-Use TaskGet with a specific task ID to view full details including description and comments.
+Use TaskGet with a specific task ID to view full details including description and dependencies.

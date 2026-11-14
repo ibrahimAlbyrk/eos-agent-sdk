@@ -366,3 +366,76 @@ async fn a_workflow_agent_with_isolation_stays_inside_its_worktree() {
     let refused = refused.trim_matches('"');
     assert!(bodies.lock().expect("lock").iter().any(|b| b.contains(refused)));
 }
+
+/// An isolated background subagent stopped with TaskStop, let go, and
+/// started again from its transcript by a message is still confined to its
+/// worktree.
+#[tokio::test]
+async fn an_isolated_subagent_stays_confined_after_it_is_stopped_and_resumed() {
+    let dirs = Dirs::new("write-anywhere-stopped");
+    repo(&dirs);
+    let blocked = dirs.project().join("from-resumed.txt");
+    let path = blocked.clone();
+    let bodies: Arc<Mutex<Vec<String>>> = Arc::default();
+    let log = Arc::clone(&bodies);
+    let mock = MockApi::responder(SocketAddr::from(([127, 0, 0, 1], 0)), move |body| {
+        let body: Value = serde_json::from_slice(body).unwrap_or_default();
+        let text = body["messages"].to_string();
+        log.lock().expect("lock").push(text.clone());
+        if !text.contains("PARENT-START") {
+            if text.contains("toolu_w") {
+                return Reply::text("resumed done");
+            }
+            if text.contains("RESUME-NOTE") {
+                return Reply::tool_use("toolu_w", "Write", &json!({ "file_path": path, "content": "x" }).to_string());
+            }
+            return Reply::text("working").slowed(std::time::Duration::from_secs(30));
+        }
+        let results = text.matches("\"tool_result\"").count();
+        let input = match results {
+            0 => json!({"description": "Work apart", "prompt": "CHILD-START", "name": "apart",
+                        "isolation": "worktree", "run_in_background": true}),
+            1 => {
+                return call(
+                    "toolu_s",
+                    "ToolSearch",
+                    &json!({"query": "select:TaskStop,SendMessage", "max_results": 5}),
+                );
+            }
+            2 => return call("toolu_stop", "TaskStop", &json!({ "task_id": "apart" })),
+            // Late enough that the stopped subagent has been let go.
+            3 => {
+                let send = json!({ "to": "apart", "message": "RESUME-NOTE" });
+                return call("toolu_m", "SendMessage", &send).slowed(std::time::Duration::from_millis(400));
+            }
+            _ => return Reply::text("parent done"),
+        };
+        call("toolu_a", "Agent", &input)
+    })
+    .await
+    .expect("mock");
+    let gate = Arc::new(Gate::default());
+    let sdk = builder(&mock, &dirs)
+        .store(Arc::new(eos_agent_engine::JsonlStore::new(dirs.root.join("transcripts"))))
+        .idle_eviction(Some(std::time::Duration::from_millis(50)))
+        .permissions(Arc::clone(&gate) as Arc<dyn PermissionGate>)
+        .build()
+        .await
+        .expect("sdk");
+    let (agent, _events) = agent(&sdk, &dirs).await;
+    agent.send_text("PARENT-START").await.expect("alive").expect("turn");
+    settle(&agent).await;
+    let refused = serde_json::to_string(&refusal(&blocked)).expect("json");
+    let refused = refused.trim_matches('"').to_owned();
+    let mut seen = false;
+    for _ in 0..200 {
+        if bodies.lock().expect("lock").iter().any(|b| b.contains(&refused)) {
+            seen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(seen, "the resumed subagent's write outside was refused");
+    assert!(!blocked.exists());
+    assert!(gate.writes_of("Write").is_empty(), "the gate is not asked about a write that cannot happen");
+}

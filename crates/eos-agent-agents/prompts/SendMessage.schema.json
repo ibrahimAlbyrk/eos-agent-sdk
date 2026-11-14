@@ -6,10 +6,6 @@
       "description": "Plain text message content",
       "type": "string"
     },
-    "notify_when_idle": {
-      "description": "Not available here: only agents of this session can be messaged, and their results reach you as notifications. Leave unset.",
-      "type": "boolean"
-    },
     "summary": {
       "description": "A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.",
       "maxLength": 200,

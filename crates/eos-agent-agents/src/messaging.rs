@@ -24,10 +24,14 @@ struct SendInput {
     message: serde_json::Value,
     #[serde(rename = "summary")]
     _summary: Option<String>,
-    /// Cross-session subscriptions; there are no other sessions here.
-    #[serde(rename = "notify_when_idle")]
-    _notify_when_idle: Option<bool>,
+    /// Not offered: refused when given.
+    notify_when_idle: Option<bool>,
 }
+
+/// The answer to `notify_when_idle`: there is nothing to subscribe to.
+const NO_IDLE_NOTICE: &str = "Not sent. notify_when_idle is not available here: only agents of this session can be \
+                              messaged, and each one's result reaches you as a notification when it finishes. Send \
+                              the message again without notify_when_idle.";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +78,9 @@ impl SendMessageTool {
     }
 
     async fn run(&self, input: SendInput, ctx: ToolContext<'_>) -> ToolOutput {
+        if input.notify_when_idle.is_some() {
+            return failure(NO_IDLE_NOTICE);
+        }
         let message = match input.message {
             serde_json::Value::String(text) => text,
             serde_json::Value::Null => String::new(),
@@ -149,11 +156,9 @@ impl std::fmt::Debug for ListAgentsTool {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListInput {
-    /// "Not available in this build" in Claude Code as well.
-    #[serde(rename = "channel")]
-    _channel: Option<String>,
-    #[serde(rename = "q")]
-    _q: Option<String>,
+    /// Described as not available: refused when set.
+    channel: Option<String>,
+    q: Option<String>,
 }
 
 impl ListAgentsTool {
@@ -179,8 +184,14 @@ impl Tool for ListAgentsTool {
 
     fn call<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, ToolOutput> {
         Box::pin(async move {
-            if let Err(e) = serde_json::from_str::<ListInput>(input.get()) {
-                return crate::invalid_input(&e);
+            let input = match serde_json::from_str::<ListInput>(input.get()) {
+                Ok(input) => input,
+                Err(e) => return crate::invalid_input(&e),
+            };
+            for (field, value) in [("channel", &input.channel), ("q", &input.q)] {
+                if value.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+                    return crate::refused(format_args!("{field} is not available in this build; leave it unset."));
+                }
             }
             let agents = self.subagents.list(ctx.agent_id).await;
             let session = self.subagents.session_of(ctx.agent_id);

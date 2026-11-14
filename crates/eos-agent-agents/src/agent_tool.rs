@@ -195,6 +195,9 @@ impl AgentTool {
     }
 
     async fn run(&self, input: Input, ctx: ToolContext<'_>) -> ToolOutput {
+        if let Some(problem) = input.name.as_deref().and_then(name_problem) {
+            return crate::refused(format_args!("InputValidationError: {problem}"));
+        }
         let depth = self.subagents.depth(ctx.agent_id);
         if depth >= self.limits.max_depth {
             return crate::refused(format!(
@@ -283,6 +286,42 @@ impl Tool for AgentTool {
             }
         })
     }
+}
+
+/// What is wrong with an agent's `name`: the schema's pattern, and names
+/// that already address an agent (`main`, the reserved names, the shape of
+/// an agent id), in any spelling.
+fn name_problem(name: &str) -> Option<&'static str> {
+    let shaped = name.len() <= 64
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !shaped {
+        return Some(
+            "name must start with a letter or digit and contain only letters, digits, underscores, or hyphens (max \
+             64 chars)",
+        );
+    }
+    let lower = name.to_ascii_lowercase();
+    if name == "main" {
+        return Some("\"main\" is reserved \u{2014} SendMessage routes it to the main conversation");
+    }
+    if ["main", "team-lead", "user", "system"].contains(&lower.as_str()) || looks_like_agent_id(&lower) {
+        return Some(
+            "name must not be a reserved name (\"main\", \"team-lead\", \"user\" or \"system\", in any spelling) or \
+             have the shape of an agent id \u{2014} those already address an agent directly",
+        );
+    }
+    None
+}
+
+/// `a`, optionally a label and `-`, then 16 hex digits: an agent id.
+fn looks_like_agent_id(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('a') else { return false };
+    let hex = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if hex(rest) {
+        return true;
+    }
+    rest.len() > 17 && hex(&rest[rest.len() - 16..]) && rest[..rest.len() - 16].ends_with('-') && rest.len() - 17 <= 63
 }
 
 /// Every token the subagent's usage counts.

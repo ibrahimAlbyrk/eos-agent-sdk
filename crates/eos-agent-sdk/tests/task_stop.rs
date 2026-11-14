@@ -220,7 +220,7 @@ async fn settle(agent: &SdkAgent) {
     tokio::time::timeout(Duration::from_secs(20), agent.settle()).await.expect("settled in time");
 }
 
-const SCOUTS: [&str; 4] = ["scout-id", "scout-name", "Scout Spelled", "scout-ref"];
+const SCOUTS: [&str; 4] = ["scout-id", "scout-name", "Scout-Spelled", "scout-ref"];
 
 #[tokio::test]
 async fn task_stop_stops_a_background_subagent_by_its_id_and_its_name() {
@@ -240,7 +240,7 @@ async fn task_stop_stops_a_background_subagent_by_its_id_and_its_name() {
             5 => call("toolu_list", "ListAgents", &json!({})),
             6 => stop(6, &agent_ids(text)[0]),
             7 => stop(7, "scout-name"),
-            8 => stop(8, "  scout spelled "),
+            8 => stop(8, "  scout-SPELLED "),
             9 => stop(9, &scout_ref()),
             10 => stop(10, &format!("scout-ref [{}]", scout_ref())),
             11 => stop(11, "scout-rfe"),

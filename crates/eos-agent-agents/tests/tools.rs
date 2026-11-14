@@ -475,3 +475,51 @@ fn discovery_precedence() {
     assert!(defs.listing().contains("\n- solo: nested (Tools: Read)\n"));
     std::fs::remove_dir_all(&home).ok();
 }
+
+/// Parameters the agent tools accept but this engine does not offer are
+/// refused in plain words, never silently ignored; an agent's name is held
+/// to its schema and may not take a name that already addresses an agent.
+#[tokio::test]
+async fn unsupported_parameters_are_refused_and_names_checked() {
+    let fake = Arc::new(FakeSubagents { agents: vec![info("a1", Some("scout"), true)], ..Default::default() });
+    let send = SendMessageTool::new(fake.clone());
+    for input in [
+        r#"{"to":"scout","message":"hi","notify_when_idle":true}"#,
+        r#"{"to":"scout","message":"","notify_when_idle":false}"#,
+    ] {
+        let out = call(&send, input, &Extensions::default()).await;
+        assert!(
+            texts(&out)[0]
+                .starts_with(r#"{"success":false,"message":"Not sent. notify_when_idle is not available here"#)
+        );
+    }
+    assert!(fake.sends.lock().expect("lock").is_empty(), "nothing was sent");
+
+    let list = ListAgentsTool::new(fake.clone());
+    let out = call(&list, r#"{"q":"scout"}"#, &Extensions::default()).await;
+    assert_eq!(texts(&out), ["<tool_use_error>q is not available in this build; leave it unset.</tool_use_error>"]);
+    let out = call(&list, r#"{"channel":" "}"#, &Extensions::default()).await;
+    assert!(texts(&out)[0].starts_with("Subagents (1):"), "an empty value changes nothing");
+
+    let agent = AgentTool::new(fake.clone(), definitions());
+    let spawn = |name: &str| serde_json::json!({"description": "d", "prompt": "p", "name": name}).to_string();
+    let pattern = "<tool_use_error>InputValidationError: name must start with a letter or digit and contain only \
+                   letters, digits, underscores, or hyphens (max 64 chars)</tool_use_error>";
+    for bad in ["-x", "two words", "ü", &"n".repeat(65)] {
+        assert_eq!(texts(&call(&agent, &spawn(bad), &Extensions::default()).await), [pattern], "{bad}");
+    }
+    let main = call(&agent, &spawn("main"), &Extensions::default()).await;
+    assert_eq!(
+        texts(&main),
+        ["<tool_use_error>InputValidationError: \"main\" is reserved \u{2014} SendMessage routes it to the main \
+          conversation</tool_use_error>"]
+    );
+    for reserved in ["Main", "USER", "system", "team-lead", "a0123456789abcdef", "aworker-0123456789abcdef"] {
+        let out = call(&agent, &spawn(reserved), &Extensions::default()).await;
+        assert!(texts(&out)[0].contains("must not be a reserved name"), "{reserved}");
+    }
+    assert!(fake.requests.lock().expect("lock").is_empty(), "no refused name started an agent");
+    let ok = call(&agent, &spawn("scout_2"), &Extensions::default()).await;
+    assert!(!ok.is_error);
+    assert_eq!(fake.requests.lock().expect("lock")[0].name.as_deref(), Some("scout_2"));
+}

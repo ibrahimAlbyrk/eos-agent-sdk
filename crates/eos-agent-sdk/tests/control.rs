@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use eos_agent_core::{
     ToolSpec,
 };
 use eos_agent_engine::JsonlStore;
-use eos_agent_mock_api::Reply;
+use eos_agent_mock_api::{MockApi, Reply};
 use eos_agent_sdk::{Account, AgentOptions, ControlError, HostTool, Provider, StopTaskError};
 use serde_json::value::RawValue;
 
@@ -194,16 +195,27 @@ async fn the_host_stops_background_tasks_by_id() {
     let dirs = Dirs::new("ctl-stop");
     let sleep = r#"{"command":"sleep 30","run_in_background":true}"#;
     let helper = r#"{"description":"Slow helper","prompt":"Take your time","run_in_background":true}"#;
-    let mock = mock([
-        Reply::tool_use("toolu_b", "Bash", sleep),
-        Reply::tool_use("toolu_w", "run_job", "{}"),
-        Reply::tool_use("toolu_a", "Agent", helper),
-        Reply::text("all started"),
-        Reply::text("slowly").slowed(Duration::from_secs(20)),
-        Reply::text("noted"),
-        Reply::text("noted"),
-    ])
-    .await;
+    // By whose request it is: the helper's must never take the parent's replies.
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let log = Arc::clone(&seen);
+    let mock = MockApi::responder(SocketAddr::from(([127, 0, 0, 1], 0)), move |body| {
+        let body: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+        log.lock().expect("lock").push(body["messages"].to_string());
+        if body["messages"][0].to_string().contains("Take your time") {
+            return Reply::text("slowly").slowed(Duration::from_secs(20));
+        }
+        let messages = body["messages"].as_array().cloned().unwrap_or_default();
+        let blocks = messages.iter().filter_map(|m| m["content"].as_array()).flatten();
+        match blocks.filter(|b| b["type"] == "tool_result").count() {
+            0 => Reply::tool_use("toolu_b", "Bash", sleep),
+            1 => Reply::tool_use("toolu_w", "run_job", "{}"),
+            2 => Reply::tool_use("toolu_a", "Agent", helper),
+            3 => Reply::text("all started"),
+            _ => Reply::text("noted"),
+        }
+    })
+    .await
+    .expect("mock");
     let sdk = sdk(&mock, &dirs).await;
     let runner: Arc<dyn Tool> = Arc::new(Runner(ToolSpec::new("run_job", "Runs a job.", serde_json::json!({}))));
     let options = AgentOptions::new(dirs.project()).mcp(false).tools(vec![HostTool::new(runner)]);
@@ -211,7 +223,7 @@ async fn the_host_stops_background_tasks_by_id() {
     agent.send_text("start things").await.expect("alive").expect("turn");
 
     // The shell task's id is in the tool result the model got.
-    let launched = all_text(&mock.requests()[1]);
+    let launched = seen.lock().expect("lock")[1].clone();
     let id = launched.split("Command running in background with ID: ").nth(1).expect("launched").split('.').next();
     let shell = id.expect("id").to_owned();
     let stopped = agent.stop_task(&shell).await.expect("stopped");
@@ -230,7 +242,7 @@ async fn the_host_stops_background_tasks_by_id() {
     assert_eq!((sub.task_type.as_str(), sub.description.as_str()), ("local_agent", "Slow helper"));
     settle(&agent).await;
     assert_eq!(agent.running_subagents(), 0);
-    let told = mock.requests().iter().map(all_text).collect::<String>();
+    let told = seen.lock().expect("lock").concat();
     assert!(told.contains("<status>killed</status>") || told.contains("was stopped"), "its parent hears of it");
 
     assert_eq!(agent.stop_task("b00000000").await, Err(StopTaskError::NotFound("b00000000".into())));

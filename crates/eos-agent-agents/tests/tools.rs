@@ -530,20 +530,25 @@ async fn unsupported_parameters_are_refused_and_names_checked() {
     assert_eq!(fake.requests.lock().expect("lock")[0].name.as_deref(), Some("scout_2"));
 }
 
-/// `team_name` and `mode` are deprecated and ignored, and say so: a call
-/// with them starts the same agent as one without.
+/// `team_name` is deprecated and ignored, and says so; the deprecated `mode`
+/// reaches the host as the subagent's narrowing mode.
 #[tokio::test]
-async fn deprecated_agent_parameters_say_they_are_ignored() {
+async fn deprecated_agent_parameters_say_what_they_do() {
     let fake = Arc::new(FakeSubagents::default());
     let agent = AgentTool::new(fake.clone(), definitions());
     let schema: serde_json::Value = serde_json::from_slice(agent.spec().json()).expect("json");
     assert_eq!(schema["input_schema"]["properties"]["team_name"]["description"], "Deprecated; ignored.");
     let mode = schema["input_schema"]["properties"]["mode"]["description"].as_str().expect("mode");
-    assert!(mode.starts_with("Deprecated; ignored."), "{mode}");
+    assert!(mode.starts_with("Deprecated. A permission mode for the subagent that can only narrow"), "{mode}");
     let plain = r#"{"description":"d","prompt":"p","name":"helper"}"#;
     let extra = r#"{"description":"d","prompt":"p","name":"helper","team_name":"t","mode":"plan"}"#;
     assert!(!call(&agent, plain, &Extensions::default()).await.is_error);
     assert!(!call(&agent, extra, &Extensions::default()).await.is_error);
     let requests = fake.requests.lock().expect("lock");
-    assert_eq!(format!("{:?}", requests[0]), format!("{:?}", requests[1]));
+    // `team_name` changes nothing; `mode` reaches the host with the request.
+    assert_eq!(requests[0].mode, None);
+    assert_eq!(requests[1].mode, Some(eos_agent_core::PermissionMode::Plan));
+    let mut second = requests[1].clone();
+    second.mode = None;
+    assert_eq!(format!("{:?}", requests[0]), format!("{:?}", second));
 }

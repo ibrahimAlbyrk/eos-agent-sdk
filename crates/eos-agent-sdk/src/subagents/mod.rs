@@ -5,8 +5,8 @@ use std::sync::{Arc, Weak};
 
 use eos_agent_agents::{AgentNotification, EXPLORE, ForkedAgent, Outcome, PLAN, StoppedBy};
 use eos_agent_core::{
-    AgentOrigin, BoxFuture, Extensions, StopOrigin, StopRefused, SubagentInfo, SubagentReport, SubagentRequest,
-    SubagentStart, Subagents, TaskEvent, TaskNotices, TaskStopped, Worktree,
+    AgentOrigin, BoxFuture, DeclaredMode, Extensions, PermissionMode, StopOrigin, StopRefused, SubagentInfo,
+    SubagentReport, SubagentRequest, SubagentStart, Subagents, TaskEvent, TaskNotices, TaskStopped, Worktree,
 };
 use eos_agent_engine::AgentHandle;
 use eos_agent_skills::agent_name;
@@ -23,6 +23,30 @@ mod stop;
 mod wake;
 
 use plan::{fork, fresh, session};
+
+/// The parent's chain of declared permission modes, then this subagent's:
+/// its definition's `permissionMode` (a fork's is `bubble`) and the call's `mode`.
+fn modes_of(
+    parent: &Blueprint,
+    request: &SubagentRequest,
+    agent_type: &str,
+    parent_origin: Option<AgentOrigin>,
+) -> Arc<[DeclaredMode]> {
+    let definition = if request.fork {
+        Some(PermissionMode::Bubble)
+    } else {
+        parent
+            .project
+            .definitions
+            .resolve(Some(agent_type))
+            .ok()
+            .and_then(|d| d.permission_mode.as_deref().and_then(PermissionMode::parse))
+    };
+    let mine = DeclaredMode { agent_type: Arc::from(agent_type), definition, spawn: request.mode };
+    let mut chain: Vec<DeclaredMode> = parent_origin.map(|o| o.modes.to_vec()).unwrap_or_default();
+    chain.push(mine);
+    chain.into()
+}
 
 /// Address of the top-level conversation in SendMessage.
 const MAIN: &str = "main";
@@ -80,6 +104,7 @@ impl EngineSubagents {
             tool_use_id: Some(request.tool_use_id.as_str()).filter(|id| !id.is_empty()).map(Arc::from),
             // An agent started by a workflow's agent still belongs to the run.
             workflow: request.workflow.clone().or_else(|| registry.origin(&request.parent_id)?.workflow),
+            modes: modes_of(&parent, &request, &agent_type, registry.origin(&request.parent_id)),
         };
         extensions.insert(origin.clone());
         wake::install(&services, &id, &extensions);

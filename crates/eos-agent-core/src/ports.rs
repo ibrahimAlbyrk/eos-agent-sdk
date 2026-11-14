@@ -189,6 +189,16 @@ pub trait PermissionGate: Send + Sync {
     fn lets_sandboxed_commands_through(&self) -> bool {
         true
     }
+
+    /// Does this gate apply the permission modes subagents declare
+    /// ([`AgentOrigin::modes`](crate::AgentOrigin::modes), resolved with
+    /// [`resolve_chain`](crate::resolve_chain))? While it does not, the
+    /// engine itself denies every call that changes something to a subagent
+    /// whose chain declares `plan`, and grants nothing a declared mode would
+    /// widen.
+    fn applies_agent_modes(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

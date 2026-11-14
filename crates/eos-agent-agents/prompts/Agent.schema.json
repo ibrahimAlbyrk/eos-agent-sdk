@@ -26,7 +26,7 @@
       "type": "string"
     },
     "mode": {
-      "description": "Deprecated; ignored. Subagents run under the parent session's permissions.",
+      "description": "Deprecated. A permission mode for the subagent that can only narrow its parent's: it applies when it is no wider than the mode the calling agent runs in, and is ignored otherwise.",
       "enum": [
         "acceptEdits",
         "auto",

@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use eos_agent_core::{
-    BoxFuture, SubagentReport, SubagentRequest, SubagentStart, Subagents, Tool, ToolContext, ToolOutput, ToolSpec,
+    BoxFuture, PermissionMode, SubagentReport, SubagentRequest, SubagentStart, Subagents, Tool, ToolContext,
+    ToolOutput, ToolSpec,
 };
 use eos_agent_types::{ContentBlock, Usage};
 use serde::Deserialize;
@@ -26,9 +27,9 @@ struct Input {
     /// refusal of `remote` is checked here.
     isolation: Option<Isolation>,
     effort: Option<Effort>,
-    /// Deprecated in Claude Code too.
-    #[serde(rename = "mode")]
-    _mode: Option<String>,
+    /// Deprecated: a permission mode for the subagent, which only narrows
+    /// its parent's (see `eos_agent_core::resolve_mode`).
+    mode: Option<String>,
     #[serde(rename = "team_name")]
     _team_name: Option<String>,
 }
@@ -235,7 +236,11 @@ impl AgentTool {
             agent_type: Some(agent_type.map_or(FORK, |d| d.name.as_str()).to_owned()),
             model: if fork { None } else { input.model.map(|m| m.alias().to_owned()) },
             effort: input.effort.map(|e| e.as_str().to_owned()),
-            isolation: input.isolation.map(|i| i.as_str().to_owned()),
+            // The call's isolation, else a worktree its definition asks for.
+            isolation: input.isolation.map(|i| i.as_str().to_owned()).or_else(|| {
+                agent_type.and_then(|d| d.isolation.as_deref()).filter(|i| *i == "worktree").map(str::to_owned)
+            }),
+            mode: input.mode.as_deref().and_then(PermissionMode::parse),
             name: input.name,
             fork,
             // Message clones share their bytes, so the copy is a refcount each.

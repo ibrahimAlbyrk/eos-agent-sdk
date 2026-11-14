@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
-use eos_agent_core::{BoxFuture, Permission, PermissionGate, ToolCall};
+use eos_agent_core::{AgentOrigin, BoxFuture, Permission, PermissionGate, ToolCall, always_plan};
 use eos_agent_tools_shell::is_read_only_command;
 use eos_agent_tools_shell::sandbox::needs_permission_anyway;
 use serde_json::Value;
@@ -101,20 +101,44 @@ pub(crate) struct TreeGate {
 impl PermissionGate for TreeGate {
     fn decide<'a>(&'a self, call: ToolCall<'a>) -> BoxFuture<'a, Permission> {
         let Some(registry) = self.registry.upgrade() else { return self.inner.decide(call) };
-        if call.origin.is_some() {
+        if let Some(origin) = call.origin {
             let main_only = registry.blueprint(call.agent_id).is_some_and(|b| b.asked.is_main_only(call.name));
             if main_only {
                 let refusal = format!("{} is only available to the main agent.", call.name);
                 return Box::pin(std::future::ready(Permission::Deny(refusal)));
             }
+            if let Some(refusal) = self.plan_refusal(origin, &call) {
+                return Box::pin(std::future::ready(Permission::Deny(refusal)));
+            }
             return self.inner.decide(call);
         }
         let Some(origin) = registry.origin(call.agent_id) else { return self.inner.decide(call) };
+        if let Some(refusal) = self.plan_refusal(&origin, &call) {
+            return Box::pin(std::future::ready(Permission::Deny(refusal)));
+        }
         Box::pin(async move { self.inner.decide(ToolCall { origin: Some(&origin), ..call }).await })
     }
 
     fn lets_sandboxed_commands_through(&self) -> bool {
         self.inner.lets_sandboxed_commands_through()
+    }
+
+    fn applies_agent_modes(&self) -> bool {
+        self.inner.applies_agent_modes()
+    }
+}
+
+impl TreeGate {
+    /// For a host gate that does not apply declared modes: a subagent whose
+    /// chain declares `plan` may only look (as [`ReadOnly`] allows).
+    fn plan_refusal(&self, origin: &AgentOrigin, call: &ToolCall<'_>) -> Option<String> {
+        if self.inner.applies_agent_modes() || !always_plan(&origin.modes) || allowed(call) {
+            return None;
+        }
+        Some(format!(
+            "Permission denied: this agent runs in plan mode, so it may read and research but not change anything ({} was not run).",
+            call.name
+        ))
     }
 }
 
@@ -128,6 +152,10 @@ impl PermissionGate for SandboxAutoAllow {
 
     fn lets_sandboxed_commands_through(&self) -> bool {
         self.inner.lets_sandboxed_commands_through()
+    }
+
+    fn applies_agent_modes(&self) -> bool {
+        self.inner.applies_agent_modes()
     }
 }
 

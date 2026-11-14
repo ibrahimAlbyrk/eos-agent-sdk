@@ -43,6 +43,7 @@ fn subagent(agent: &Agent) {
         parent_id: "root".into(),
         tool_use_id: None,
         workflow: None,
+        modes: Default::default(),
     });
 }
 

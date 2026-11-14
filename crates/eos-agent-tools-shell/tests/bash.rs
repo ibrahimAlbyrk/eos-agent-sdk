@@ -74,6 +74,7 @@ async fn a_subagents_cd_does_not_carry_over() {
         parent_id: "main".into(),
         tool_use_id: None,
         workflow: None,
+        modes: Default::default(),
     };
     h.ext().insert(origin);
     let ws = h.workspace();

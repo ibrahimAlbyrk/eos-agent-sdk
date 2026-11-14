@@ -8,6 +8,7 @@ use eos_agent_types::Usage;
 
 use crate::BoxFuture;
 use crate::message::StoredMessage;
+use crate::modes::{DeclaredMode, PermissionMode};
 use crate::ports::AgentEvent;
 use crate::tasks::TaskEvent;
 
@@ -51,6 +52,8 @@ pub struct SubagentRequest {
     pub cwd: Option<PathBuf>,
     /// The workflow run and `agent()` call that started it, for hosts.
     pub workflow: Option<WorkflowTag>,
+    /// The Agent call's `mode` (`None`: not given, or not a mode name).
+    pub mode: Option<PermissionMode>,
     /// Claude Code's `forkedSkillName`: the `context: fork` skill a typed
     /// `/name` launched it for in the background.
     pub forked_skill: Option<String>,
@@ -78,6 +81,10 @@ pub struct AgentOrigin {
     pub tool_use_id: Option<Arc<str>>,
     /// The workflow `agent()` call it runs, or the one an agent above it runs.
     pub workflow: Option<WorkflowTag>,
+    /// What each subagent from the top-level agent down to this one
+    /// declared about its permission mode, in that order (see
+    /// [`resolve_chain`](crate::resolve_chain)).
+    pub modes: Arc<[DeclaredMode]>,
 }
 
 /// Which workflow `agent()` call a subagent runs.

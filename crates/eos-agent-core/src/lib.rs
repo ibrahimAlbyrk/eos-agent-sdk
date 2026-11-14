@@ -11,6 +11,7 @@ mod context;
 mod extensions;
 mod message;
 mod model;
+mod modes;
 mod ports;
 mod retry;
 mod spill;
@@ -31,6 +32,7 @@ pub use context::{Compaction, CompactionText, ReminderSource, SessionContext};
 pub use extensions::Extensions;
 pub use message::{CacheTtl, MessageError, StoredMessage, SystemPrompt};
 pub use model::{EventStream, LiveRequest, ModelClient, ModelError, ModelRequest, RateLimitInfo, Thinking};
+pub use modes::{DeclaredMode, PermissionMode, always_plan, resolve_chain, resolve_mode};
 pub use ports::{
     AgentEvent, AllowAll, BlockKind, Clock, EventSink, Permission, PermissionGate, ResponseUsage, ToolCall,
     TranscriptStore,

@@ -557,6 +557,7 @@ async fn the_gate_can_change_a_calls_input_and_sees_who_started_the_agent() {
         parent_id: "parent".into(),
         tool_use_id: Some("toolu_agent".into()),
         workflow: Some(eos_agent_core::WorkflowTag { run_id: "r1".into(), agent_index: 1 }),
+        modes: Default::default(),
     });
     let mut sub = agent(vec![Echo::tool("echo", false)]).with_extensions(extensions);
     sub.run_turn(user("go"), deps(&model, &sink, &gate), &CancellationToken::new()).await.expect("turn");

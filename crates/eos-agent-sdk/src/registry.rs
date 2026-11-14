@@ -81,8 +81,9 @@ struct Node {
     link: Link,
     blueprint: Arc<Blueprint>,
     children: Vec<Arc<str>>,
-    /// Subagents only: how humans and SendMessage know it.
-    info: Option<ChildInfo>,
+    /// Subagents only: how humans and SendMessage know it (boxed: the node
+    /// table keeps its capacity, and top-level agents need none of it).
+    info: Option<Box<ChildInfo>>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +205,10 @@ impl Registry {
         let Some(parent_node) = nodes.get_mut(parent) else { return false };
         parent_node.children.push(Arc::clone(&id));
         let parent = Some(Arc::from(parent));
-        nodes.insert(id, Node { parent, link: Link::Owned(handle), blueprint, children: Vec::new(), info: Some(info) });
+        nodes.insert(
+            id,
+            Node { parent, link: Link::Owned(handle), blueprint, children: Vec::new(), info: Some(Box::new(info)) },
+        );
         true
     }
 
@@ -335,7 +339,7 @@ impl Registry {
     }
 
     pub(crate) fn child(&self, id: &str) -> Option<ChildInfo> {
-        self.nodes().get(id)?.info.clone()
+        self.nodes().get(id)?.info.as_deref().cloned()
     }
 
     /// Who started `id` (`None` for a top-level agent or one that is gone).

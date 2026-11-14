@@ -223,6 +223,15 @@ impl Tracker {
         }
     }
 
+    /// Tells the host a subagent that was not working ended as `status`
+    /// (one stopped while it waited on its own background work, or before
+    /// a turn it was claimed for began).
+    pub(crate) async fn announce_end(&self, status: &'static str) {
+        let Some(forward) = &self.forward else { return };
+        let announced = Announced { forward: Some(forward), started: Instant::now(), open: false };
+        let _ = forward.to.send(forward.event(announced.ended(status, None, None))).await;
+    }
+
     /// Runs one turn of `agent` and reports it.
     pub(crate) async fn run(&self, agent: &AgentHandle, input: Vec<ContentBlock>) -> RunEnd {
         let mut ended = self.ended.subscribe();

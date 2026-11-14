@@ -3,9 +3,8 @@
 
 use std::sync::Arc;
 
-use eos_agent_core::{AgentEvent, BackgroundTasks, RewindError, StoredMessage, TaskStatus, check_cut};
+use eos_agent_core::{AgentEvent, RewindError, StopOrigin, StopRefused, StoredMessage, check_cut};
 use eos_agent_engine::{AgentUpdate, Gone};
-use eos_agent_tools_shell::ShellTasks;
 use tokio::sync::mpsc;
 
 use crate::agent::SdkAgent;
@@ -34,6 +33,7 @@ pub enum ControlError {
 /// Why a background task was not stopped.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StopTaskError {
+    /// Nothing goes by that handle in the agent's tree (the id).
     #[error("No task found with ID: {0}")]
     NotFound(String),
     #[error("Task {id} is not running (status: {status})")]
@@ -43,8 +43,10 @@ pub enum StopTaskError {
 /// A background task a host stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoppedTask {
-    /// The agent whose task it was.
+    /// The agent whose task it was (a subagent is its own).
     pub agent_id: String,
+    /// The task's own id (a subagent's agent id, also when it was named).
+    pub task_id: String,
     /// Claude Code's task type: `local_bash` (a background command or a
     /// monitor), `local_workflow`, `local_agent` (a subagent).
     pub task_type: String,
@@ -162,48 +164,30 @@ impl SdkAgent {
 }
 
 impl Sdk {
-    /// Stops one background task of `agent_id` or of an agent below it, by
-    /// the id its events carry, and waits until it has ended: a background
-    /// command or monitor, a workflow run, or a working subagent (by its
-    /// agent id). What TaskStop does for the model; the task's owner hears
-    /// of it as it would then.
+    /// Stops one background task of `agent_id` or of an agent below it, for
+    /// the host's user, and waits until it has ended: a background command
+    /// or monitor or a workflow run (by the id its events carry), or a
+    /// subagent (by its agent id or the name it was started with, as
+    /// TaskStop takes them). A subagent is stopped while it works or while
+    /// it waits on its own background work: its turn is interrupted, its
+    /// commands, monitors and workflow runs end, it is never woken again,
+    /// and another agent's message no longer resumes it. Its parent is told
+    /// it "was stopped by user" (with what it had written, as a
+    /// notification that wakes an idle parent); the host sees its turn end
+    /// as `killed`. One that was waiting is stopped with every subagent
+    /// below it, and its parent, already told it finished, hears nothing
+    /// more. Workflow agents are stopped with their run.
     pub async fn stop_task(&self, agent_id: &str, task_id: &str) -> Result<StoppedTask, StopTaskError> {
-        let registry = &self.services.registry;
-        let tree = registry.tree_ids(agent_id);
-        let not_running = |status| StopTaskError::NotRunning { id: task_id.to_owned(), status };
-        for id in &tree {
-            let Some(handle) = registry.handle(id) else { continue };
-            let stopped = |task_type: &str, description| StoppedTask {
-                agent_id: id.to_string(),
-                task_type: task_type.to_owned(),
-                description,
-            };
-            // Kept apart from the lookups, so no lock is held while waiting.
-            let shells = handle.extensions().get::<ShellTasks>();
-            if let Some(shells) = shells
-                && let Some(outcome) = shells.stop(task_id).await
-            {
-                return outcome.map(|command| stopped("local_bash", command)).map_err(not_running);
-            }
-            let task = handle.extensions().get::<BackgroundTasks>().and_then(|tasks| tasks.get(task_id));
-            if let Some(task) = task {
-                if task.status() != TaskStatus::Running {
-                    return Err(not_running(task.status().as_str()));
-                }
-                task.stop().await;
-                return Ok(stopped(&task.task_type, task.description.clone()));
-            }
+        let stop = self.services.subagents.stop_task(agent_id, task_id, StopOrigin::Host).await;
+        match stop {
+            Some(Ok(stopped)) => Ok(StoppedTask {
+                agent_id: stopped.owner,
+                task_id: stopped.task_id,
+                task_type: stopped.task_type,
+                description: stopped.description,
+            }),
+            Some(Err(StopRefused::NotRunning { id, status })) => Err(StopTaskError::NotRunning { id, status }),
+            Some(Err(_)) | None => Err(StopTaskError::NotFound(task_id.to_owned())),
         }
-        // A subagent below `agent_id`, by its own id.
-        let child = tree.iter().skip(1).find(|id| id.as_ref() == task_id).and_then(|id| registry.child(id));
-        let Some(child) = child else { return Err(StopTaskError::NotFound(task_id.to_owned())) };
-        let handle = registry.handle(task_id).filter(|_| child.running).ok_or_else(|| not_running(child.ended))?;
-        handle.interrupt();
-        handle.wait_idle().await;
-        Ok(StoppedTask {
-            agent_id: task_id.to_owned(),
-            task_type: "local_agent".to_owned(),
-            description: child.description,
-        })
     }
 }

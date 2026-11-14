@@ -149,6 +149,58 @@ pub struct SubagentInfo {
     pub delisted: bool,
 }
 
+/// Who asks [`Subagents::stop_task`] to stop a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopOrigin {
+    /// An agent, through its TaskStop tool. The session's top-level agent
+    /// may stop any task of the session; a subagent only its own (its
+    /// commands and monitors, its workflow runs, itself).
+    Agent,
+    /// The host, for its user: any task of the agent it names or of an
+    /// agent below it. A subagent the user stopped is not resumed by
+    /// another agent's message.
+    Host,
+}
+
+/// A task [`Subagents::stop_task`] stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskStopped {
+    /// The task's own id (a subagent's agent id, also when it was named).
+    pub task_id: String,
+    /// `local_bash` (a background command or a monitor), `local_workflow`,
+    /// `local_agent` (a subagent).
+    pub task_type: String,
+    /// Its command, or its description.
+    pub description: String,
+    /// The agent whose task it was (a subagent is its own).
+    pub owner: String,
+}
+
+/// Why [`Subagents::stop_task`] stopped nothing, as the model reads it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StopRefused {
+    /// No task goes by that handle: the whole message, with what runs.
+    #[error("{0}")]
+    NotFound(String),
+    #[error("Task {id} is not running (status: {status})")]
+    NotRunning { id: String, status: &'static str },
+    /// A subagent asked to stop a task that is not its own.
+    #[error("{0}")]
+    NotOwner(String),
+}
+
+/// The [`Subagents`] of the agent whose [`Extensions`](crate::Extensions)
+/// hold it: how a tool every agent shares (TaskStop) reaches the host's
+/// agents.
+#[derive(Clone)]
+pub struct SubagentPort(pub Arc<dyn Subagents>);
+
+impl std::fmt::Debug for SubagentPort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubagentPort").finish_non_exhaustive()
+    }
+}
+
 pub trait Subagents: Send + Sync {
     fn start(&self, request: SubagentRequest) -> BoxFuture<'_, Result<SubagentStart, String>>;
 
@@ -163,6 +215,27 @@ pub trait Subagents: Send + Sync {
     fn notify<'a>(&'a self, agent: &'a str, text: String, wake: bool) -> BoxFuture<'a, Result<(), String>> {
         let _ = (agent, text, wake);
         Box::pin(async { Err("This host cannot deliver notifications.".to_owned()) })
+    }
+
+    /// Stops a background task named by `handle` and waits until it has
+    /// ended: a command or monitor, a workflow run (by task id), or a
+    /// subagent (by its agent id, or the name it was started with). A
+    /// stopped subagent's running turn is interrupted, its own commands,
+    /// monitors and workflow runs end with it, it is not woken again and
+    /// its parent is told it was stopped. One that finished while its own
+    /// background work runs on is stopped with that work and with every
+    /// subagent below it. `caller` is the agent asking
+    /// ([`StopOrigin::Agent`]) or the agent whose tree the host searches
+    /// ([`StopOrigin::Host`]). `None`: this host does not stop tasks
+    /// (TaskStop then reaches the caller's own commands and workflow runs).
+    fn stop_task<'a>(
+        &'a self,
+        caller: &'a str,
+        handle: &'a str,
+        origin: StopOrigin,
+    ) -> BoxFuture<'a, Option<Result<TaskStopped, StopRefused>>> {
+        let _ = (caller, handle, origin);
+        Box::pin(async { None })
     }
 
     /// Tells the host about a background task of one of its agents.

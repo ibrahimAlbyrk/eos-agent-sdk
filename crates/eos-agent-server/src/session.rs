@@ -163,7 +163,8 @@ impl Session {
                 let stopped = self.hosted(&p.agent_id)?.agent.stop_task(&p.task_id).await;
                 let stopped = stopped.map_err(|e| RpcError::new(rpc::INVALID_REQUEST, e.to_string()))?;
                 Ok(json!({
-                    "agentId": stopped.agent_id, "taskType": stopped.task_type, "description": stopped.description,
+                    "agentId": stopped.agent_id, "taskId": stopped.task_id, "taskType": stopped.task_type,
+                    "description": stopped.description,
                 }))
             }
             "complete" => complete(ready, params::parse(params)?).await,

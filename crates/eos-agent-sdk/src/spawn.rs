@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use eos_agent_core::{
     AgentConfig, AgentEvent, Compaction, CompactionText, Extensions, FailedServer, InternalPaths, ReminderSource,
-    ServerNotes, SystemPrompt, TaskEvents, ToolSource, Toolbox,
+    ServerNotes, SubagentPort, SystemPrompt, TaskEvents, ToolSource, Toolbox,
 };
 use eos_agent_engine::AgentSpec;
 use eos_agent_mcp::{McpConfig, McpScope, McpServerConfig, McpToolset};
@@ -320,6 +320,8 @@ pub(crate) fn agent_spec(
     if let Some(connecting) = &blueprint.connecting {
         extensions.insert(connecting.clone());
     }
+    // TaskStop reaches the session's agents through it.
+    extensions.insert(SubagentPort(Arc::clone(&services.subagents)));
     extensions.insert(TaskListId(blueprint.task_list.to_string()));
     extensions.insert(blueprint.search_budget.clone());
     extensions.insert(SandboxSession(blueprint.task_list.to_string()));

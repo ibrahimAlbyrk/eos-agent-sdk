@@ -193,6 +193,12 @@ impl ShellTasks {
         Some(Ok(task.command.clone()))
     }
 
+    /// The status (`running`, `completed`, `failed`, `killed`) and command
+    /// of the background command or monitor `id`.
+    pub fn describe(&self, id: &str) -> Option<(&'static str, String)> {
+        self.get(id).map(|t| (t.status().as_str(), t.command.clone()))
+    }
+
     /// Whether any task still runs.
     pub fn any_running(&self) -> bool {
         self.tasks.lock().unwrap_or_else(PoisonError::into_inner).iter().any(|t| t.status() == Status::Running)

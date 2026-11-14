@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use eos_agent_core::{AgentConfig, AgentOrigin, Reminders, SubagentInfo, SystemPrompt, Toolbox, Wake};
+use eos_agent_core::{
+    AgentConfig, AgentOrigin, BackgroundTasks, Reminders, StopOrigin, SubagentInfo, SystemPrompt, Toolbox, Wake,
+};
 use eos_agent_engine::{AgentHandle, WeakAgentHandle};
 use eos_agent_tools_shell::ShellTasks;
 use eos_agent_tools_web::SessionSearchBudget;
@@ -109,6 +111,32 @@ pub(crate) struct ChildInfo {
     /// went back to work meanwhile.
     pub(crate) generation: u64,
     pub(crate) tracker: Arc<Tracker>,
+    /// Stopped (TaskStop or the host) and not resumed since: its run ends
+    /// as `killed` and no wake starts it again.
+    pub(crate) stop: Option<Stop>,
+    /// The host stopped it for its user: another agent's message never
+    /// resumes it.
+    pub(crate) stopped_by_user: bool,
+}
+
+/// How a subagent was stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Stop {
+    pub(crate) origin: StopOrigin,
+    /// Stopped with an agent above it: its parent is not told.
+    pub(crate) quiet: bool,
+}
+
+/// What [`Registry::claim_stop`] found.
+#[derive(Debug)]
+pub(crate) enum Claim {
+    /// It works: its turn is to be interrupted.
+    Running(Option<AgentHandle>),
+    /// It had finished, its own background work (or a subagent it started)
+    /// still running; it now counts as stopped.
+    Waiting(Option<AgentHandle>),
+    /// Nothing to stop: how its last run ended.
+    Ended(&'static str),
 }
 
 /// One live agent as a host sees it.
@@ -231,8 +259,12 @@ impl Registry {
         let node = nodes.get_mut(id)?;
         let Link::Owned(handle) = &node.link else { return None };
         let info = node.info.as_mut()?;
-        if info.running || (wake && (info.ended == "killed" || !has_unread_notes(handle))) {
+        if info.running || (wake && (info.ended == "killed" || info.stop.is_some() || !has_unread_notes(handle))) {
             return None;
+        }
+        if !wake {
+            // A message resumes it.
+            info.stop = None;
         }
         info.running = true;
         info.generation += 1;
@@ -256,6 +288,47 @@ impl Registry {
                 handle
             }
         }
+    }
+
+    /// Marks the subagent `id` stopped if it works, or if it finished while
+    /// its own background work (or a subagent it started) still runs.
+    /// Decided under the lock, so a wake or a message claiming it at the
+    /// same time either sees it stopped or is stopped with it.
+    pub(crate) fn claim_stop(&self, id: &str, stop: Stop) -> Claim {
+        let mut nodes = self.nodes();
+        let waiting = waiting_on_work(&nodes, id);
+        let Some(node) = nodes.get_mut(id) else { return Claim::Ended("killed") };
+        let handle = live(&node.link);
+        let Some(info) = node.info.as_mut() else { return Claim::Ended("completed") };
+        if !info.running && !waiting {
+            return Claim::Ended(info.ended);
+        }
+        info.stop = Some(stop);
+        info.stopped_by_user |= stop.origin == StopOrigin::Host;
+        if info.running {
+            return Claim::Running(handle);
+        }
+        info.ended = "killed";
+        info.ended_ms = now_ms();
+        Claim::Waiting(handle)
+    }
+
+    /// Whether [`claim_stop`](Self::claim_stop) would stop `id`; else how
+    /// its last run ended.
+    pub(crate) fn stoppable(&self, id: &str) -> Result<(), &'static str> {
+        let nodes = self.nodes();
+        let Some(info) = nodes.get(id).and_then(|n| n.info.as_ref()) else { return Err("killed") };
+        if info.running || waiting_on_work(&nodes, id) { Ok(()) } else { Err(info.ended) }
+    }
+
+    /// How `id` was stopped, if it was and has not been resumed since.
+    pub(crate) fn stop_of(&self, id: &str) -> Option<Stop> {
+        self.nodes().get(id)?.info.as_ref()?.stop
+    }
+
+    /// The subagents `id` started.
+    pub(crate) fn children(&self, id: &str) -> Vec<Arc<str>> {
+        self.nodes().get(id).map(|n| n.children.clone()).unwrap_or_default()
     }
 
     pub(crate) fn child(&self, id: &str) -> Option<ChildInfo> {
@@ -447,6 +520,30 @@ impl Registry {
 /// A command or monitor the agent started still runs.
 pub(crate) fn has_running_tasks(handle: &AgentHandle) -> bool {
     handle.extensions().get::<ShellTasks>().is_some_and(|tasks| tasks.any_running())
+}
+
+/// A subagent that finished well while a command, monitor or workflow run
+/// of its own, or a subagent it started, still runs.
+fn waiting_on_work(nodes: &HashMap<Arc<str>, Node>, id: &str) -> bool {
+    let Some(node) = nodes.get(id) else { return false };
+    let Some(info) = &node.info else { return false };
+    if info.running || info.ended != "completed" {
+        return false;
+    }
+    let child_runs =
+        node.children.iter().any(|c| nodes.get(c).and_then(|n| n.info.as_ref()).is_some_and(|i| i.running));
+    let own_work = live(&node.link).is_some_and(|h| {
+        has_running_tasks(&h) || h.extensions().get::<BackgroundTasks>().is_some_and(|t| !t.all_running().is_empty())
+    });
+    child_runs || own_work
+}
+
+fn live(link: &Link) -> Option<AgentHandle> {
+    match link {
+        Link::Owned(handle) => Some(handle.clone()),
+        Link::Borrowed(weak) => weak.upgrade(),
+        Link::Released => None,
+    }
 }
 
 fn has_unread_notes(handle: &AgentHandle) -> bool {

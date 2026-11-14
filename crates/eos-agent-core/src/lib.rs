@@ -38,8 +38,8 @@ pub use ports::{
 pub use retry::RetryPolicy;
 pub use spill::{PREVIEW_CHARS, format_size, persisted_output};
 pub use subagents::{
-    AgentOrigin, SubagentInfo, SubagentObserver, SubagentReport, SubagentRequest, SubagentStart, SubagentSystem,
-    Subagents, WorkflowTag, Worktree,
+    AgentOrigin, StopOrigin, StopRefused, SubagentInfo, SubagentObserver, SubagentPort, SubagentReport,
+    SubagentRequest, SubagentStart, SubagentSystem, Subagents, TaskStopped, WorkflowTag, Worktree,
 };
 pub use tasks::{BackgroundTask, BackgroundTasks, TaskEvent, TaskEventKind, TaskEvents, TaskStatus, TaskUsage};
 pub use tool::{Tool, ToolContext, ToolOutput, ToolReview, ToolSpec, Toolbox};

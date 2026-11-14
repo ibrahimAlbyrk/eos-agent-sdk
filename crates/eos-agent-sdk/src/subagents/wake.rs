@@ -48,7 +48,13 @@ pub(super) fn wake(services: &Arc<Services>, id: &str) {
 /// cannot be read) never hears.
 pub(super) async fn report_to_parent(services: &Arc<Services>, id: &str, text: String) {
     let registry = &services.registry;
-    let Some(parent) = registry.parent(id) else { return };
+    let Some(mut parent) = registry.parent(id) else { return };
+    // A parent that was stopped hears nothing more: its session does.
+    if registry.child(&parent).is_some_and(|p| !p.running && p.ended == "killed")
+        && let Some(root) = registry.root(&parent)
+    {
+        parent = root;
+    }
     if registry.is_top_level(&parent) {
         if let Some(main) = registry.handle(&parent) {
             let _ = main.notify(text, true).await;

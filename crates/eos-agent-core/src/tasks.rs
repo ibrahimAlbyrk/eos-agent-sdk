@@ -107,6 +107,12 @@ impl BackgroundTasks {
         let tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
         tasks.iter().filter(|t| t.task_type == task_type && t.status() == TaskStatus::Running).cloned().collect()
     }
+
+    /// Every task still running, of any type.
+    pub fn all_running(&self) -> Vec<Arc<BackgroundTask>> {
+        let tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        tasks.iter().filter(|t| t.status() == TaskStatus::Running).cloned().collect()
+    }
 }
 
 impl Drop for BackgroundTasks {

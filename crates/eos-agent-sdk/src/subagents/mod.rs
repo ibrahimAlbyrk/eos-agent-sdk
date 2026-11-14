@@ -5,8 +5,8 @@ use std::sync::{Arc, Weak};
 
 use eos_agent_agents::{AgentNotification, EXPLORE, ForkedAgent, Outcome, PLAN, StoppedBy};
 use eos_agent_core::{
-    AgentOrigin, BoxFuture, Extensions, SubagentInfo, SubagentReport, SubagentRequest, SubagentStart, Subagents,
-    TaskEvent, TaskNotices, Worktree,
+    AgentOrigin, BoxFuture, Extensions, StopOrigin, StopRefused, SubagentInfo, SubagentReport, SubagentRequest,
+    SubagentStart, Subagents, TaskEvent, TaskNotices, TaskStopped, Worktree,
 };
 use eos_agent_engine::AgentHandle;
 use eos_agent_skills::agent_name;
@@ -14,11 +14,12 @@ use eos_agent_types::ContentBlock;
 
 use crate::child::{Forward, Listeners, RunEnd, SubagentStarted, Tracker};
 use crate::profile::Provider;
-use crate::registry::{Blueprint, ChildInfo, has_running_tasks, now_ms};
+use crate::registry::{Blueprint, ChildInfo, Stop, has_running_tasks, now_ms};
 use crate::services::Services;
 use crate::spawn::agent_spec;
 
 mod plan;
+mod stop;
 mod wake;
 
 use plan::{fork, fresh, session};
@@ -120,6 +121,8 @@ impl EngineSubagents {
             fork: request.fork,
             generation: 0,
             tracker: Arc::clone(&tracker),
+            stop: None,
+            stopped_by_user: false,
         };
         if !registry.insert_child(&request.parent_id, handle.clone(), Arc::new(blueprint), info) {
             return Err("The calling agent is not running.".into());
@@ -135,6 +138,11 @@ impl EngineSubagents {
             tracker.run(&handle, input).await
         };
         stop_if_abandoned.armed = false;
+        let stop = registry.stop_of(&id);
+        let end = as_stopped(end, stop, &id);
+        if stop.is_some() {
+            stop::end_work(&services, &id, &handle).await;
+        }
         registry.set_ended(&id, ended(&end));
         let generation = registry.set_running(&id, false);
         services.release_later(&id, generation);
@@ -165,6 +173,13 @@ impl EngineSubagents {
         let target = addressed(&registry.session_agents(from), to).ok_or_else(|| {
             format!("No agent named '{to}' is currently addressable. Spawn a new one or use the agent ID.")
         })?;
+        if registry.child(&target.agent_id).is_some_and(|i| i.stopped_by_user && !i.running) {
+            return Err(format!(
+                "Agent {} was stopped by the user and won't be resumed. Treat its work as cancelled; only launch a \
+                 new agent if the user explicitly asks.",
+                target.agent_id
+            ));
+        }
         let handle = match registry.handle(&target.agent_id) {
             Some(handle) => handle,
             None if registry.is_released(&target.agent_id) => restart(&services, &target.agent_id).await?,
@@ -274,7 +289,18 @@ async fn run_and_report(
 ) {
     let registry = Arc::clone(&services.registry);
     let id = agent.id().to_owned();
-    let end = tracker.run(&agent, input).await;
+    // Stopped after it was claimed for this run and before the run began.
+    let end = if registry.stop_of(&id).is_some() {
+        tracker.announce_end("killed").await;
+        RunEnd::Stopped(empty_report(&id))
+    } else {
+        tracker.run(&agent, input).await
+    };
+    let stop = registry.stop_of(&id);
+    let end = as_stopped(end, stop, &id);
+    if stop.is_some() {
+        stop::end_work(&services, &id, &agent).await;
+    }
     // Its commands and monitors that still run may wake it again.
     let waiting = has_running_tasks(&agent);
     drop(agent);
@@ -288,7 +314,7 @@ async fn run_and_report(
             note.waiting = waiting;
             note.render()
         }
-        RunEnd::Stopped(report) => notification(report, &info, Outcome::Stopped(StoppedBy::Unknown)),
+        RunEnd::Stopped(report) => notification(report, &info, Outcome::Stopped(stopped_by(stop))),
         RunEnd::Failed(error) => AgentNotification {
             agent_id: &id,
             tool_use_id: called_by(&info),
@@ -303,7 +329,10 @@ async fn run_and_report(
     };
     registry.set_ended(&id, ended(&end));
     // Queued before the agent counts as done, so the caller is never seen idle in between.
-    wake::report_to_parent(&services, &id, text).await;
+    // One stopped with an agent above it is not reported.
+    if !stop.is_some_and(|s| s.quiet) {
+        wake::report_to_parent(&services, &id, text).await;
+    }
     let generation = registry.set_running(&id, false);
     services.release_later(&id, generation);
     // A note of its own work that came after its last request.
@@ -314,6 +343,37 @@ async fn run_and_report(
 /// of a typed command has none).
 fn called_by(info: &ChildInfo) -> Option<&str> {
     Some(info.tool_use_id.as_str()).filter(|id| !id.is_empty())
+}
+
+/// A run of a subagent that was stopped meanwhile ends as stopped, however
+/// its turn came to an end.
+fn as_stopped(end: RunEnd, stop: Option<Stop>, id: &str) -> RunEnd {
+    match (end, stop) {
+        (RunEnd::Finished(report), Some(_)) => RunEnd::Stopped(report),
+        (RunEnd::Failed(_), Some(_)) => RunEnd::Stopped(empty_report(id)),
+        (end, _) => end,
+    }
+}
+
+fn empty_report(id: &str) -> SubagentReport {
+    SubagentReport {
+        agent_id: id.to_owned(),
+        text: String::new(),
+        usage: eos_agent_types::Usage::default(),
+        tool_uses: 0,
+        duration_ms: 0,
+        structured: None,
+        worktree: None,
+    }
+}
+
+/// Who the parent's notification says stopped it.
+fn stopped_by(stop: Option<Stop>) -> StoppedBy<'static> {
+    match stop.map(|s| s.origin) {
+        Some(StopOrigin::Agent) => StoppedBy::Parent,
+        Some(StopOrigin::Host) => StoppedBy::User,
+        None => StoppedBy::Unknown,
+    }
 }
 
 /// Claude Code's task status for how a run ended.
@@ -370,6 +430,18 @@ impl Subagents for EngineSubagents {
             let services = self.services.upgrade().ok_or("The agent service has shut down.")?;
             let handle = services.registry.handle(agent).ok_or("That agent has ended.")?;
             handle.notify(text, wake).await.map_err(|e| e.to_string())
+        })
+    }
+
+    fn stop_task<'a>(
+        &'a self,
+        caller: &'a str,
+        handle: &'a str,
+        origin: StopOrigin,
+    ) -> BoxFuture<'a, Option<Result<TaskStopped, StopRefused>>> {
+        Box::pin(async move {
+            let services = self.services.upgrade()?;
+            Some(stop::stop_task(&services, caller, handle, origin).await)
         })
     }
 

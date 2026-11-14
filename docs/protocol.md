@@ -274,15 +274,22 @@ it). `userInvocable`: `agent.send` with `text: "/name …"` runs it.
 ### `task.stop`
 
 `{"agentId": "…", "taskId": "b1x2y3z4w"}` stops one background task of a
-top-level agent or of a subagent below it and waits until it has ended: a
-background command or monitor, a workflow run (the `taskId` of its
-`task.event`), or a working subagent (its agent id). The task's owner hears
-of it as after its own TaskStop.
+top-level agent or of a subagent below it, for the user, and waits until it
+has ended: a background command or monitor, a workflow run (the `taskId` of
+its `task.event`), or a subagent (its agent id, or the name it was started
+with) that works or waits on its own background work. A stopped subagent's
+turn is interrupted, its own commands, monitors and workflow runs end, it is
+never woken again, and another agent's message no longer resumes it; its
+parent is told it "was stopped by user" (with what it had written so far), a
+notification that wakes an idle parent; its turn's `ended` event says
+`killed`. One stopped while waiting is stopped with every subagent below it
+(each `ended` as `killed`), and its parent hears nothing more.
 
-Result: `{"agentId": "…", "taskType": "local_bash", "description": "sleep 30"}`
+Result: `{"agentId": "…", "taskId": "…", "taskType": "local_bash", "description": "sleep 30"}`
 (`taskType`: `local_bash`, `local_workflow` or `local_agent`; `agentId`: the
-agent whose task it was). An unknown or already ended task is an error
-(-32600) in TaskStop's words.
+agent whose task it was, a subagent being its own; `taskId`: the task's own
+id, a subagent's agent id when it was named). An unknown or already ended
+task is an error (-32600) in TaskStop's words.
 
 ### `complete`
 

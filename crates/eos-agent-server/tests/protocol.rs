@@ -338,7 +338,8 @@ async fn a_client_changes_a_live_agent_and_asks_one_shot_questions() {
     assert_eq!(started["event"]["taskType"], "local_bash");
     let id = started["taskId"].as_str().expect("id").to_owned();
     let stopped = client.call("task.stop", json!({"agentId": agent, "taskId": id})).await.expect("stopped");
-    assert_eq!(stopped, json!({"agentId": agent, "taskType": "local_bash", "description": "sleep 30"}));
+    let stopped_json = json!({"agentId": agent, "taskId": id, "taskType": "local_bash", "description": "sleep 30"});
+    assert_eq!(stopped, stopped_json);
     let again = client.call("task.stop", json!({"agentId": agent, "taskId": id})).await.expect_err("ended");
     assert_eq!(again["code"], -32600);
 

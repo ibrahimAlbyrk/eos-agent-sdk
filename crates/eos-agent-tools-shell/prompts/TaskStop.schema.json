@@ -7,7 +7,7 @@
       "type": "string"
     },
     "task_id": {
-      "description": "The ID of the background task to stop. Agent-team teammates and named background agents are also accepted by agent ID or name.",
+      "description": "The ID of the background task to stop. Background agents are also accepted by agent ID or by the name they were spawned with.",
       "type": "string"
     }
   },

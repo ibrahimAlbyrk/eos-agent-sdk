@@ -192,3 +192,16 @@ fn task_id_monitor(result: &str) -> String {
     let at = result.find("(task ").expect("a task id") + 6;
     result[at..].chars().take_while(char::is_ascii_alphanumeric).collect()
 }
+
+/// TaskStop says which handles it takes and what a subagent may stop, and
+/// names nothing that cannot exist here; the SDK's TaskStop tests hold the
+/// behaviour to it.
+#[test]
+fn task_stop_describes_the_handles_and_scope_it_has() {
+    let h = Harness::new();
+    let spec = String::from_utf8_lossy(h.tool("TaskStop").spec().json()).into_owned();
+    assert!(!spec.to_lowercase().contains("team"), "{spec}");
+    assert!(spec.contains("pass its agent ID or the name it was spawned with as task_id"), "{spec}");
+    assert!(spec.contains("A subagent can stop only its own tasks"), "{spec}");
+    assert!(spec.contains("accepted by agent ID or by the name they were spawned with"), "{spec}");
+}

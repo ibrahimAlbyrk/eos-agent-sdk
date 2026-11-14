@@ -140,6 +140,7 @@ pub(super) async fn publish(
         meta.insert("baseVersion".into(), json!(k.version));
     }
 
+    let creating = slug.is_none();
     let (slug, body) = plan(c, slug, meta, entries).await?;
     let (status, answer) = c.deploy(body).await.map_err(|e| explain("The publish", e))?;
     let deployed: Deployed = match status {
@@ -161,7 +162,7 @@ pub(super) async fn publish(
     };
 
     let typed = typed || deployed.type_instance;
-    state.record(&deployed.slug, Known { version: deployed.version.clone(), title: Some(title), typed });
+    state.record(&deployed.slug, Known { version: deployed.version.clone(), title: Some(title.clone()), typed });
     t.pins.published(&t.session(), &deployed.slug, &deployed.version, &written, &removed);
     state.bind_path(&local, &deployed.slug);
     t.set(&deployed.slug, contract.as_deref());
@@ -184,6 +185,15 @@ pub(super) async fn publish(
     };
     if deployed.unchanged {
         out.push_str(" The server already had this exact content, so the live version did not change.");
+    }
+    if let Some(opened) = t.surface.written(ctx, &deployed.slug, Some(&title)).await {
+        out.push_str(opened);
+    } else if creating && t.surface.can_open() && crate::surface::top_level(ctx) {
+        out.push_str(if t.surface.open(ctx, &deployed.slug, Some(&title), crate::surface::OpenReason::Created).await {
+            " It is now open for the person."
+        } else {
+            " Opening it for the person failed; give them the link."
+        });
     }
     if input.pin == Some(true) {
         out.push_str(match c.favorite(&deployed.slug, true).await {

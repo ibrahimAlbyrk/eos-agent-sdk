@@ -10,7 +10,7 @@ use std::time::Duration;
 use eos_agent_agents::SpawnLimits;
 use eos_agent_anthropic::auth::{FallbackSecrets, KeychainSecrets};
 use eos_agent_anthropic::{AnthropicClient, ClientConfig};
-use eos_agent_artifacts::{ArtifactWatcher, CapabilitiesGuide, FrameConfig, WatchConfig};
+use eos_agent_artifacts::{ArtifactOpener, ArtifactWatcher, CapabilitiesGuide, FrameConfig, WatchConfig};
 use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{
     CacheTtl, Credential, ModelClient, ModelError, PermissionGate, ReminderSource, TokenSource, Tool, TranscriptStore,

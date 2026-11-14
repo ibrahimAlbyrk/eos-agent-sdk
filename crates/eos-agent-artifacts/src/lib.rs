@@ -62,6 +62,7 @@ mod files;
 mod ids;
 mod pins;
 mod state;
+mod surface;
 mod targets;
 mod watch;
 
@@ -76,6 +77,7 @@ pub use client::{DEFAULT_BASE_URL, DEFAULT_CONTENT_HOST, FrameClient, FrameConfi
 pub use comments::ArtifactCommentsTool;
 pub use data::ArtifactDataTool;
 pub use ids::{short_id, slug_from_url, viewer_url};
+pub use surface::{ArtifactOpener, OpenReason, OpenRequest};
 pub use targets::ArtifactSession;
 pub use watch::{
     Armed, ArtifactWatcher, ComposeRequest, Composed, Probe, REPLY_MAX_TOKENS, REPLY_SYSTEM, WatchConfig,
@@ -84,11 +86,22 @@ pub use watch::{
 
 /// The three tools, sharing one client (one connection pool).
 pub fn tools(auth: Arc<dyn TokenSource>, config: FrameConfig) -> Result<Vec<Arc<dyn Tool>>, FrameError> {
+    tools_opening(auth, config, None)
+}
+
+/// The three tools, opening artifacts for the person through `opener` (see
+/// [`ArtifactOpener`] for when).
+pub fn tools_opening(
+    auth: Arc<dyn TokenSource>,
+    config: FrameConfig,
+    opener: Option<Arc<dyn ArtifactOpener>>,
+) -> Result<Vec<Arc<dyn Tool>>, FrameError> {
     let client = Arc::new(FrameClient::new(auth, config)?);
+    let surface = Arc::new(surface::Surface::new(opener));
     Ok(vec![
-        Arc::new(ArtifactTool::new(Arc::clone(&client))),
+        Arc::new(ArtifactTool::new(Arc::clone(&client)).with_surface(Arc::clone(&surface))),
         Arc::new(ArtifactCommentsTool::new(Arc::clone(&client))),
-        Arc::new(ArtifactDataTool::new(client)),
+        Arc::new(ArtifactDataTool::new(client).with_surface(surface)),
     ])
 }
 
@@ -103,7 +116,7 @@ pub fn tools_watched(
     notifier: Arc<dyn WatchNotifier>,
     watch: WatchConfig,
 ) -> Result<(Vec<Arc<dyn Tool>>, ArtifactWatcher), FrameError> {
-    let kit = kit(auth, config, notifier, watch, std::env::temp_dir().join("artifact-capabilities"))?;
+    let kit = kit(auth, config, notifier, watch, std::env::temp_dir().join("artifact-capabilities"), None)?;
     Ok((kit.tools, kit.watcher))
 }
 
@@ -124,23 +137,28 @@ impl std::fmt::Debug for ArtifactKit {
 
 /// The watched tools (see [`tools_watched`]) and the `artifact-capabilities`
 /// skill's composer, which writes the contract's type definitions under
-/// `skill_dir`.
+/// `skill_dir`. With `opener`, artifacts open for the person as
+/// [`ArtifactOpener`] describes.
 pub fn kit(
     auth: Arc<dyn TokenSource>,
     config: FrameConfig,
     notifier: Arc<dyn WatchNotifier>,
     watch: WatchConfig,
     skill_dir: PathBuf,
+    opener: Option<Arc<dyn ArtifactOpener>>,
 ) -> Result<ArtifactKit, FrameError> {
     let client = Arc::new(FrameClient::new(auth, config)?);
     let watcher = ArtifactWatcher::new(Arc::clone(&client), notifier, watch);
     let capabilities = CapabilitiesGuide::new(Arc::clone(&client), skill_dir);
-    let artifact =
-        ArtifactTool::new(Arc::clone(&client)).with_watcher(watcher.clone()).with_targets(capabilities.targets());
+    let surface = Arc::new(surface::Surface::new(opener));
+    let artifact = ArtifactTool::new(Arc::clone(&client))
+        .with_watcher(watcher.clone())
+        .with_targets(capabilities.targets())
+        .with_surface(Arc::clone(&surface));
     let tools: Vec<Arc<dyn Tool>> = vec![
         Arc::new(artifact),
         Arc::new(ArtifactCommentsTool::new(Arc::clone(&client)).with_watcher(watcher.clone())),
-        Arc::new(ArtifactDataTool::new(client)),
+        Arc::new(ArtifactDataTool::new(client).with_surface(surface)),
     ];
     Ok(ArtifactKit { tools, watcher, capabilities })
 }

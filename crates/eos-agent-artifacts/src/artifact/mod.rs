@@ -19,6 +19,7 @@ use serde_json::value::RawValue;
 use crate::client::{FrameClient, FrameError};
 use crate::ids;
 use crate::pins::PathPins;
+use crate::surface::Surface;
 use crate::targets::{ContractTargets, session_of};
 use crate::watch::ArtifactWatcher;
 
@@ -29,6 +30,7 @@ const SCHEMA: &str = include_str!("../../prompts/Artifact.schema.json");
 pub(crate) struct Input {
     pub action: Option<String>,
     pub after: Option<String>,
+    pub auto_open: Option<String>,
     pub asset: Option<bool>,
     pub asset_ids: Option<Vec<String>>,
     pub capabilities: Option<serde_json::Map<String, Value>>,
@@ -47,9 +49,11 @@ pub(crate) struct Input {
     pub limit: Option<u32>,
     pub out_dir: Option<String>,
     pub overwrite_unread: Option<Vec<String>>,
+    pub page: Option<bool>,
     pub path: Option<String>,
     pub paths: Option<Vec<String>>,
     pub pin: Option<bool>,
+    pub prompt: Option<String>,
     pub root: Option<String>,
     pub scope: Option<String>,
     pub title: Option<String>,
@@ -69,6 +73,7 @@ pub struct ArtifactTool {
     watcher: Option<ArtifactWatcher>,
     targets: Option<Arc<ContractTargets>>,
     pins: Arc<PathPins>,
+    surface: Arc<Surface>,
 }
 
 impl std::fmt::Debug for ArtifactTool {
@@ -85,12 +90,19 @@ impl ArtifactTool {
             watcher: None,
             targets: None,
             pins: Arc::default(),
+            surface: Arc::default(),
         }
     }
 
     /// Publishes start watching the artifact through `watcher`.
     pub fn with_watcher(mut self, watcher: ArtifactWatcher) -> Self {
         self.watcher = Some(watcher);
+        self
+    }
+
+    /// Opens artifacts for the person (shared with `ArtifactData`).
+    pub(crate) fn with_surface(mut self, surface: Arc<Surface>) -> Self {
+        self.surface = surface;
         self
     }
 
@@ -105,7 +117,7 @@ impl ArtifactTool {
         let input: Input = serde_json::from_str(input.get()).map_err(|e| format!("invalid input: {e}"))?;
         let c = &self.client;
         let w = self.watcher.as_ref();
-        let t = Target { targets: self.targets.as_deref(), pins: &self.pins, ctx: &ctx };
+        let t = Target { targets: self.targets.as_deref(), pins: &self.pins, surface: &self.surface, ctx: &ctx };
         match input.action.as_deref().unwrap_or("publish") {
             "publish" if input.asset == Some(true) => assets::upload(c, &input, &ctx).await,
             "publish" if input.type_url.is_some() && input.url.is_none() => {
@@ -117,7 +129,7 @@ impl ArtifactTool {
             "list" => browse::list(c, t, &input).await,
             "delete" => browse::delete(c, t, &input, &ctx).await,
             "pin" | "unpin" => browse::pin(c, &input).await,
-            "open" => browse::open(&input),
+            "open" => browse::open(c, t, &input).await,
             "quickstart" => quickstart::quickstart(c, &input).await,
             other => Err(format!("unknown action {other:?}")),
         }
@@ -193,7 +205,9 @@ pub(crate) struct Target<'a> {
     targets: Option<&'a ContractTargets>,
     /// The published paths each session has seen.
     pub(crate) pins: &'a PathPins,
-    ctx: &'a ToolContext<'a>,
+    /// Opens artifacts for the person.
+    pub(crate) surface: &'a Surface,
+    pub(crate) ctx: &'a ToolContext<'a>,
 }
 
 impl Target<'_> {

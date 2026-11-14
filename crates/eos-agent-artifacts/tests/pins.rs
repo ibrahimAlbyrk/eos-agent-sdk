@@ -43,8 +43,9 @@ async fn the_skill_follows_the_target_artifacts_pinned_contract() {
         mock.on("GET", &source(slug, "v1", ""), |_| Reply::content("<p>live</p>", "text/html"));
     }
     let dir = std::env::temp_dir().join(format!("eos-pins-{}", std::process::id()));
-    let kit = kit(Tokens::new("tok", None), frame_config(&mock), Arc::new(Quiet), WatchConfig::default(), dir.clone())
-        .expect("kit");
+    let kit =
+        kit(Tokens::new("tok", None), frame_config(&mock), Arc::new(Quiet), WatchConfig::default(), dir.clone(), None)
+            .expect("kit");
     let artifact = &kit.tools[0];
     let agent = Agent::new();
     agent.ext().insert(ArtifactSession("session-1".into()));

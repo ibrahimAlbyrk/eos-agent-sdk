@@ -174,6 +174,14 @@ pub(super) async fn create_from_type(
     ctx: &ToolContext<'_>,
 ) -> Result<String, String> {
     let type_slug = slug_of(input.type_url.as_deref(), "type_url")?;
+    let after_first_write = match input.auto_open.as_deref() {
+        None | Some("at_create") => false,
+        Some("after_first_write") if input.file_path.is_some() => {
+            return Err("`auto_open`: \"after_first_write\" has nothing to wait for with `file_path` \u{2014} this call's publish is its first write; remove `auto_open`".into());
+        }
+        Some("after_first_write") => true,
+        Some(other) => return Err(format!("`auto_open` is \"at_create\" or \"after_first_write\", not {other:?}")),
+    };
     let created = c.create_from_type(&type_slug, input.title.as_deref()).await.map_err(|e| match e.status() {
         Some(404) => "Artifact type not found — check the link, and that this account can open the type in a browser (creating Artifacts from types may also not be available to this account yet)".to_owned(),
         _ => explain("Creating the Artifact (it may or may not have been created: check with action \"list\" before creating again)", e),
@@ -196,6 +204,21 @@ pub(super) async fn create_from_type(
         ids::viewer_url(&type_slug),
         super::publish::watch_line(w, ctx, &slug, &version)
     );
+    if t.surface.can_open() {
+        if after_first_write {
+            t.surface.defer(&slug);
+            out.push_str(
+                " It opens for the person on its first write (a publish or an ArtifactData write to this `url`).",
+            );
+        } else if crate::surface::top_level(ctx) {
+            let reason = crate::surface::OpenReason::Created;
+            out.push_str(if t.surface.open(ctx, &slug, title.as_deref(), reason).await {
+                " It is now open for the person."
+            } else {
+                " Opening it for the person failed; give them the link."
+            });
+        }
+    }
     if input.file_path.is_some() {
         let fill = Input { url: Some(url.clone()), type_url: None, created_now: true, ..input.clone() };
         let published = publish::publish(c, w, t, &fill, ctx).await?;

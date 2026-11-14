@@ -459,6 +459,11 @@ impl ArtifactWatcher {
         }
     }
 
+    /// One tool-less request through the host's model (`None`: none to ask).
+    pub(crate) async fn compose(&self, agent: &str, request: &ComposeRequest) -> Option<Composed> {
+        self.inner.notifier.compose(agent, request).await
+    }
+
     /// Ties `agent` to its own record of its artifacts (its extensions).
     pub(crate) fn attach(&self, agent: &str, extensions: &Extensions) {
         let state = Arc::downgrade(&extensions.get_or_default::<ArtifactState>());

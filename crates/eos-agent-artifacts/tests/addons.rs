@@ -200,7 +200,8 @@ async fn delete_pin_open_and_read_a_page() {
     let url = viewer_url(PAGE);
 
     let (err, text) = agent.call(&tools[0], json!({ "action": "read", "url": url })).await;
-    assert!(!err && text.contains("<h1>Hello</h1>") && text.contains("cannot edit"), "{text}");
+    // Someone else's page: no model to summarize it here, so its content stays out.
+    assert!(!err && !text.contains("<h1>Hello</h1>") && text.contains("cannot edit"), "{text}");
     let (err, text) = agent.call(&tools[0], json!({ "action": "read", "url": url, "path": "css/site.css" })).await;
     assert!(!err && text.contains("body{}"), "{text}");
     let (err, _) = agent.call(&tools[0], json!({ "action": "pin", "url": url })).await;

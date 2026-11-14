@@ -16,6 +16,7 @@ pub struct SdkBuilder {
     pub(super) paths: Option<ClaudePaths>,
     pub(super) artifacts: Option<bool>,
     pub(super) artifact_api: (FrameConfig, WatchConfig),
+    pub(super) artifact_opener: Option<Arc<dyn ArtifactOpener>>,
     pub(super) prompts: Prompts,
     pub(super) web_fetch: WebFetchConfig,
     pub(super) mcp: McpLimits,
@@ -71,6 +72,7 @@ impl Default for SdkBuilder {
             paths: None,
             artifacts: None,
             artifact_api: (FrameConfig::default(), WatchConfig::default()),
+            artifact_opener: None,
             prompts: Prompts::default(),
             web_fetch: WebFetchConfig::default(),
             mcp: McpLimits::default(),
@@ -223,6 +225,16 @@ impl SdkBuilder {
     /// claude.ai's frame API and live channel).
     pub fn artifact_api(mut self, frame: FrameConfig, watch: WatchConfig) -> Self {
         self.artifact_api = (frame, watch);
+        self
+    }
+
+    /// The host's view that shows an artifact to the person: a top-level
+    /// agent's publish that creates one opens it, a create from an Artifact
+    /// type opens it at once or (`auto_open: "after_first_write"`) on its
+    /// first write, and `action: "open"` opens one (default: none; nothing
+    /// opens, and `open` hands the link back).
+    pub fn artifact_opener(mut self, opener: Arc<dyn ArtifactOpener>) -> Self {
+        self.artifact_opener = Some(opener);
         self
     }
 

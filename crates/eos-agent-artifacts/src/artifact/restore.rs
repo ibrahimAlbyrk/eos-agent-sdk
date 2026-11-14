@@ -162,8 +162,8 @@ fn pin(pins: &PathPins, session: &str, input: &Input, text: &str) {
             let (Some(slug), Some(ver)) = (slug(), between(text, " \u{2014} live version ", " \u{2014} ")) else {
                 return;
             };
-            let Some(own) = between(text, "Its own files: ", ".") else { return };
-            for path in own.split(", ").filter(|p| *p != "none listed") {
+            let Some(own) = text.lines().find_map(|l| l.strip_prefix("Its own files: ")) else { return };
+            for path in own.trim_end_matches('.').split(", ").filter(|p| *p != "none listed") {
                 pins.read(session, &slug, path, Seen::Unknown, &ver, pins.ticket());
             }
         }

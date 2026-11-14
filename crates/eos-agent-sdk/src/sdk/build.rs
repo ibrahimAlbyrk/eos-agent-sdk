@@ -296,8 +296,15 @@ impl SdkBuilder {
                 .join("bundled-skills")
                 .join(uuid::Uuid::new_v4().simple().to_string())
                 .join("artifact-capabilities");
-            let artifact_kit = eos_agent_artifacts::kit(Arc::clone(artifact_auth), frame, notes, watch, skill_dir)
-                .map_err(|e| SdkError::Artifacts(e.to_string()))?;
+            let artifact_kit = eos_agent_artifacts::kit(
+                Arc::clone(artifact_auth),
+                frame,
+                notes,
+                watch,
+                skill_dir,
+                self.artifact_opener.clone(),
+            )
+            .map_err(|e| SdkError::Artifacts(e.to_string()))?;
             tools.extend(artifact_kit.tools);
             kit = Some((artifact_kit.watcher, artifact_kit.capabilities));
         }

@@ -83,6 +83,7 @@ impl Tool for Echo {
     fn call<'a>(&'a self, input: &'a RawValue, ctx: ToolContext<'a>) -> BoxFuture<'a, ToolOutput> {
         Box::pin(async move {
             let v: serde_json::Value = serde_json::from_str(input.get()).expect("json");
+            assert!(v["panic"].as_bool() != Some(true), "echo told to panic");
             let delay = v["delay_ms"].as_u64().unwrap_or(0);
             if v["cancel"].as_bool() == Some(true) {
                 ctx.cancel.cancel();
@@ -249,6 +250,21 @@ async fn unknown_tool_and_denied_call_return_errors() {
     let results = tool_results(&a, 2);
     assert!(results[0].0.contains("No such tool") && results[0].1);
     assert_eq!(results[1], ("not allowed here".to_owned(), true));
+}
+
+#[tokio::test]
+async fn a_panicking_tool_fails_its_own_call_only() {
+    let model = FakeModel::new([
+        tools(&[("t1", "echo", r#"{"panic":true}"#), ("t2", "echo", r#"{"text":"still here"}"#)]),
+        text("ok"),
+    ]);
+    let sink = Collect::default();
+    let mut a = agent(vec![Echo::tool("echo", true)]);
+    let out = a.run_turn(user("go"), deps(&model, &sink, &AllowAll), &CancellationToken::new()).await.expect("turn");
+    assert_eq!(out, TurnOutcome::Finished(StopReason::EndTurn));
+    let results = tool_results(&a, 2);
+    assert!(results[0].1 && results[0].0.contains("echo told to panic"), "{results:?}");
+    assert_eq!(results[1], ("still here".to_owned(), false));
 }
 
 #[tokio::test]

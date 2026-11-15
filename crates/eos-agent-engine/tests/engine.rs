@@ -281,3 +281,21 @@ async fn a_hosts_seed_is_recorded_and_a_resumed_session_opens_after_it() {
     assert_eq!(texts, ["Earlier: SUMMARY", "CTXgo on", "ENV"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn a_panicking_turn_ends_only_its_agent_and_says_so() {
+    let mock = MockApi::start([Reply::text("ok")]).await.expect("mock");
+    let engine = Engine::builder(model(&mock)).build();
+    let (agent, mut events) = engine.spawn(spec());
+    let boom: eos_agent_engine::LocalWork = Box::new(|_| Box::pin(async { panic!("a turn went wrong") }));
+    assert!(agent.run_local(boom).await.is_err(), "the caller learns the agent is gone");
+    let drained = async { while events.recv().await.is_some() {} };
+    tokio::time::timeout(Duration::from_secs(5), drained).await.expect("the event channel closes");
+    tokio::time::timeout(Duration::from_secs(5), agent.wait_idle()).await.expect("idle, not stuck");
+    assert!(agent.send_text("again").await.is_err());
+
+    // Other agents of the engine carry on.
+    let (other, _events) = engine.spawn(spec());
+    let out = other.send_text("hi").await.expect("alive").expect("turn");
+    assert_eq!(out, TurnOutcome::Finished(StopReason::EndTurn));
+}

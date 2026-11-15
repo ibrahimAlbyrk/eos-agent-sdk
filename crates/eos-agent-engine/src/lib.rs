@@ -111,7 +111,7 @@ impl Engine {
                 }
             }));
         }
-        tokio::spawn(task::run(agent, self.clone(), inbox, ChannelSink(events_tx), shared, ready));
+        tokio::spawn(task::guarded(agent, self.clone(), inbox, ChannelSink(events_tx), shared, ready));
         (handle, events)
     }
 }

@@ -1,6 +1,8 @@
 //! One agent's task: it sleeps on its command channel between turns, and
 //! after sitting idle long enough hands its history to the transcript store.
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 
@@ -9,6 +11,7 @@ use eos_agent_core::{
     TurnError, Wake,
 };
 use eos_agent_types::ContentBlock;
+use futures_util::FutureExt;
 use tokio::sync::mpsc;
 
 use crate::Engine;
@@ -24,7 +27,38 @@ struct Memory {
     pinned: bool,
 }
 
-pub(crate) async fn run(
+/// [`run`], where a panic ends only this agent, as if it had stopped: it is
+/// logged, the event channel closes and every waiting caller gets
+/// [`Gone`](crate::Gone).
+pub(crate) async fn guarded(
+    agent: Agent,
+    engine: Engine,
+    inbox: mpsc::Receiver<Command>,
+    sink: ChannelSink,
+    shared: Arc<Shared>,
+    ready: Option<tokio::sync::oneshot::Receiver<()>>,
+) {
+    let id = agent.id().to_owned();
+    let after = Arc::clone(&shared);
+    // Bound to a `let`, so the agent and its channels are dropped before what follows.
+    let ran = AssertUnwindSafe(run(agent, engine, inbox, sink, shared, ready)).catch_unwind().await;
+    if let Err(panic) = ran {
+        tracing::error!(agent_id = %id, "the agent's task panicked: {}", panic_message(&*panic));
+        end(&after);
+        // Nothing runs or waits any more; `wait_idle` must not hang.
+        after.pending.send_replace(0);
+    }
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a panic")
+}
+
+async fn run(
     mut agent: Agent,
     engine: Engine,
     mut inbox: mpsc::Receiver<Command>,

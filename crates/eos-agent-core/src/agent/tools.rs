@@ -1,9 +1,11 @@
 //! Running a response's tool calls: permission, concurrency, results.
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use eos_agent_types::ContentBlock;
-use futures_util::{StreamExt, stream};
+use futures_util::{FutureExt, StreamExt, stream};
 use serde_json::value::RawValue;
 use tokio_util::sync::CancellationToken;
 
@@ -49,7 +51,9 @@ impl Agent {
             // inference for higher-ranked lifetimes when spawned on a runtime.
             let pending: Vec<BoxFuture<'_, ToolOutput>> = calls[start..end]
                 .iter()
-                .map(|&(id, name, input)| Box::pin(self.call_tool(id, name, input, deps, cancel)) as BoxFuture<'_, _>)
+                .map(|&(id, name, input)| {
+                    Box::pin(self.guarded_call(id, name, input, deps, cancel)) as BoxFuture<'_, _>
+                })
                 .collect();
             let batch = stream::iter(pending).buffered(self.config.max_parallel_tools.max(1)).collect::<Vec<_>>().await;
             for ((id, _, _), output) in calls[start..end].iter().zip(batch) {
@@ -68,6 +72,20 @@ impl Agent {
         }
         results.extend(beside);
         (results, cancel.is_cancelled(), ends_turn)
+    }
+
+    /// A call whose tool panics fails on its own; the turn carries on.
+    async fn guarded_call(
+        &self,
+        id: &str,
+        name: &str,
+        input: &RawValue,
+        deps: Deps<'_>,
+        cancel: &CancellationToken,
+    ) -> ToolOutput {
+        AssertUnwindSafe(self.call_tool(id, name, input, deps, cancel)).catch_unwind().await.unwrap_or_else(|panic| {
+            ToolOutput::error(format!("Error: the tool failed unexpectedly: {}", panic_message(&*panic)))
+        })
     }
 
     async fn call_tool(
@@ -123,6 +141,14 @@ impl Agent {
         let input = updated.as_deref().unwrap_or(input);
         until_cancelled(cancel, tool.call(input, ctx)).await.unwrap_or_else(|| ToolOutput::error(TOOL_INTERRUPTED))
     }
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a panic")
 }
 
 /// Tool calls without results would make the next request invalid.

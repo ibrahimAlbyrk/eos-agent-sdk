@@ -217,7 +217,7 @@ impl SdkAgent {
             .model
             .as_deref()
             .map(|m| self.services.resolve_model(m))
-            .filter(|m| current.as_deref().is_none_or(|c| Provider::of(c) == Provider::of(m)));
+            .filter(|m| current.as_deref().is_none_or(|c| Provider::id_of(c) == Provider::id_of(m)));
         let system_turns = model.as_deref().map(|m| self.services.system_turns(m));
         let overrides = TurnOverrides { model, effort: expansion.effort, system_turns };
         Ok(self.handle.send_with(blocks, overrides).await?)

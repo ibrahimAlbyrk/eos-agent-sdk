@@ -38,6 +38,7 @@ mod models;
 mod options;
 mod profile;
 mod project;
+mod providers;
 mod registry;
 mod routing;
 mod sandbox;
@@ -67,6 +68,7 @@ pub use eos_agent_mcp::{
     AuthPrompter, AuthRequest, BrowserOpener, McpConfig, McpCredentials, McpServerConfig, McpServerState,
     McpServerStatus, McpTransport, PrintPrompter, STEP_UP_CHOICES, StepUpAnswer, StepUpChoice, StepUpRequest,
 };
+pub use eos_agent_openai::chat::{Compat as ChatCompat, MaxTokens};
 /// The context window of an OpenAI model the account's catalog gives none for.
 pub use eos_agent_openai::models::DEFAULT_CONTEXT_WINDOW as OPENAI_CONTEXT_WINDOW;
 pub use eos_agent_openai::{Catalog as OpenAiCatalog, ChatGptLogin, ModelInfo as OpenAiModel, ToolPlacement};
@@ -79,6 +81,7 @@ pub use host::HostTool;
 pub use models::resolve_model;
 pub use options::{AgentOptions, SystemPromptOverride};
 pub use profile::Provider;
+pub use providers::ProviderConfig;
 pub use registry::AgentInfo;
 pub use sdk::{Sdk, SdkBuilder, SdkError, claude_mcp_credentials};
 pub use side::SideError;

@@ -13,7 +13,8 @@ use eos_agent_anthropic::{AnthropicClient, ClientConfig};
 use eos_agent_artifacts::{ArtifactOpener, ArtifactWatcher, CapabilitiesGuide, FrameConfig, WatchConfig};
 use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{
-    CacheTtl, Credential, ModelClient, ModelError, PermissionGate, ReminderSource, TokenSource, Tool, TranscriptStore,
+    CacheTtl, Credential, ModelClient, ModelError, PermissionGate, ProviderId, ReminderSource, SystemPrompt,
+    TokenSource, Tool, TranscriptStore,
 };
 use eos_agent_engine::{AgentHandle, DEFAULT_IDLE_EVICTION, Engine};
 use eos_agent_mcp::{AuthPrompter, McpCredentials, McpHub, McpLimits, OAuthOptions, PrintPrompter, XaaIdp};
@@ -37,6 +38,7 @@ use crate::gate::{SandboxAutoAllow, TreeGate};
 use crate::inline::{Shell, ShellCell};
 use crate::models;
 use crate::profile::{ModelProfile, Provider};
+use crate::providers::{ProviderConfig, Providers};
 use crate::registry::{AgentInfo, Registry};
 use crate::routing::RoutingClient;
 use crate::sandbox::Sandboxes;
@@ -107,6 +109,25 @@ impl Sdk {
     /// stale (`None`: OpenAI models are not set up; empty: none was read yet).
     pub async fn openai_models(&self) -> Option<Arc<eos_agent_openai::Catalog>> {
         Some(self.services.openai.as_ref()?.catalog.ensure().await)
+    }
+
+    /// Adds a provider that speaks the Chat Completions API, or replaces
+    /// the one of that name. Its models are named `<id>/<model>`; agents
+    /// already on one use the new settings from their next request.
+    pub fn set_provider(&self, config: ProviderConfig) -> Result<(), SdkError> {
+        Ok(self.services.others.set(config)?)
+    }
+
+    /// Takes a configured provider away. False when there was none of that name.
+    pub fn remove_provider(&self, id: &str) -> bool {
+        self.services.others.remove(&ProviderId::new(id))
+    }
+
+    /// The ids of the models a configured provider lists, as it names them
+    /// (`None`: no provider of that name).
+    pub async fn provider_models(&self, id: &str) -> Option<Result<Vec<String>, ModelError>> {
+        let provider = self.services.others.get(&ProviderId::new(id))?;
+        Some(provider.client.list_models().await)
     }
 
     /// The context window an agent on `model` (an id or alias) gets, in tokens.

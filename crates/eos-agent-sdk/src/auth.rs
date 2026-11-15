@@ -5,9 +5,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use eos_agent_anthropic::auth::ClaudeLogin;
-use eos_agent_core::{BoxFuture, Credential, ModelError, RateLimitInfo, RequestAuth, StaticCredential, TokenSource};
-
-use crate::profile::Provider;
+use eos_agent_core::{
+    BoxFuture, Credential, ModelError, ProviderId, RateLimitInfo, RequestAuth, StaticCredential, TokenSource,
+};
 
 /// How many credentials in a row may turn out unusable before one is read
 /// (a host could hand out signed-out ones forever).
@@ -129,8 +129,8 @@ impl SessionAuth {
     }
 
     /// As a request's credential for `provider`.
-    pub(crate) fn for_requests(self: &Arc<Self>, provider: Provider) -> RequestAuth {
-        RequestAuth { provider: provider.id(), source: Arc::clone(self) as Arc<dyn TokenSource> }
+    pub(crate) fn for_requests(self: &Arc<Self>, provider: ProviderId) -> RequestAuth {
+        RequestAuth { provider, source: Arc::clone(self) as Arc<dyn TokenSource> }
     }
 
     pub(crate) fn set(&self, source: Arc<dyn TokenSource>) {

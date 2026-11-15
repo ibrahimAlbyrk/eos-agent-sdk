@@ -35,14 +35,16 @@ impl SdkBuilder {
             }
             None => (None, None),
         };
-        let mut router = RoutingClient::default();
+        let others = Arc::new(Providers::default());
+        let mut router = RoutingClient::new(Arc::clone(&others));
+        let claude_id = ProviderId::new(eos_agent_anthropic::PROVIDER);
         if let Some(client) = anthropic {
-            router.add(Provider::Anthropic.id(), client);
+            router.add(claude_id.clone(), client);
         }
         if let Some(client) = &openai_client {
-            router.add(Provider::OpenAi.id(), Arc::clone(client) as Arc<dyn ModelClient>);
+            router.add(ProviderId::new(eos_agent_openai::PROVIDER), Arc::clone(client) as Arc<dyn ModelClient>);
         }
-        let has_claude = router.has(&Provider::Anthropic.id());
+        let has_claude = router.has(&claude_id);
         let client: Arc<dyn ModelClient> = Arc::new(router);
         let default_model = self
             .model
@@ -139,6 +141,11 @@ impl SdkBuilder {
             tools.extend(search.clone());
             OpenAiModels { profile: self.openai_profile(&tools), catalog }
         });
+        // Pages are summarized by Claude Code's small model, as for Claude agents.
+        let mut other_tools = shared_tools.clone();
+        other_tools.push(self.fetch_tool(&client, None));
+        other_tools.extend(search.clone());
+        let other_profile = self.other_profile(&other_tools);
         let reminders: Vec<Arc<dyn ReminderSource>> = vec![
             Arc::new(FileChangeReminders::new(&self.prompts)),
             Arc::new(DateChangeReminder::new(&self.prompts)),
@@ -151,6 +158,8 @@ impl SdkBuilder {
             openai,
             claude_auth,
             openai_auth,
+            others,
+            other_profile,
             auth_failover: self.auth_failover,
             compaction: Arc::new(ClaudeCodeCompaction::new(&self.prompts)),
             prompts: self.prompts,
@@ -237,6 +246,20 @@ impl SdkBuilder {
             cache_ttl: None,
             defer_tools: false,
             full_wording: false,
+        }
+    }
+
+    /// The prompt and tools of a model on a provider the host configured:
+    /// the OpenAI ones, without naming a model family.
+    fn other_profile(&self, tools: &[Arc<dyn Tool>]) -> ModelProfile {
+        let neutral = |f: Fragment| self.prompts.get(f).replacen(" running on an OpenAI GPT model", "", 1);
+        let (base, tool_notes) = (neutral(Fragment::OpenAiBase), self.prompts.get(Fragment::OpenAiTools));
+        ModelProfile {
+            provider: Provider::Other,
+            system: SystemPrompt::new(&[(&base, None), (tool_notes, None)]),
+            system_texts: vec![Arc::from(base.as_str()), Arc::from(tool_notes)],
+            identity: Arc::from(neutral(Fragment::OpenAiIdentity)),
+            ..self.openai_profile(tools)
         }
     }
 

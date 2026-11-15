@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use eos_agent_core::{
-    AgentConfig, AgentEvent, Compaction, CompactionText, Extensions, FailedServer, InternalPaths, Origin,
+    AgentConfig, AgentEvent, Compaction, CompactionText, Extensions, FailedServer, InternalPaths, Origin, ProviderId,
     ReminderSource, ServerNotes, StoredMessage, SubagentPort, SystemPrompt, TaskEvents, ToolSource, Toolbox,
 };
 use eos_agent_engine::AgentSpec;
@@ -98,7 +98,7 @@ pub(crate) fn model_setup(
     let max_tokens = asked.max_tokens.unwrap_or(default_max);
     let context_window = asked.context_window.unwrap_or(default_window);
     let mut config = AgentConfig::new(model);
-    config.provider = Some(profile.provider.id());
+    config.provider = Some(Provider::id_of(model));
     config.max_tokens = max_tokens;
     config.effort = services.effort_for(model, effort);
     config.thinking = services.thinking_for(model, thinking_summaries, max_tokens);
@@ -159,10 +159,9 @@ impl Sdk {
         });
         let connecting = updates.clone().map(|u| McpConnecting(u as Arc<dyn ConnectingServers>));
         config.tool_source = updates.clone().map(|u| u as Arc<dyn ToolSource>);
-        let provider = Provider::of(&model);
-        let auth = options.auth.map(|a| a.0).or_else(|| services.own_auth(provider)).map(|source| {
+        let auth = options.auth.map(|a| a.0).or_else(|| services.own_auth(&model)).map(|source| {
             let session = SessionAuth::new(&id, source, services.auth_failover.clone());
-            config.auth = Some(session.for_requests(provider));
+            config.auth = Some(session.for_requests(Provider::id_of(&model)));
             session
         });
 
@@ -224,8 +223,9 @@ impl Sdk {
 /// (and no model).
 fn with_origins(history: Vec<StoredMessage>) -> Vec<StoredMessage> {
     let origin = |m: &StoredMessage| {
-        let provider = if eos_agent_openai::wrote(m.json()) { Provider::OpenAi } else { Provider::Anthropic };
-        Origin { provider: provider.id(), model: "".into() }
+        let provider =
+            if eos_agent_openai::wrote(m.json()) { eos_agent_openai::PROVIDER } else { eos_agent_anthropic::PROVIDER };
+        Origin { provider: ProviderId::new(provider), model: "".into() }
     };
     let unsigned = |m: &StoredMessage| m.role() == Role::Assistant && m.origin().is_none();
     history

@@ -10,6 +10,7 @@
 //! For load tests, [`MockApi::responder`] answers every request from its
 //! body instead, and records nothing.
 
+mod chat;
 mod pairing;
 mod reply;
 mod responses;
@@ -94,6 +95,7 @@ impl MockApi {
         let app = axum::Router::new()
             .route("/v1/messages", post(messages))
             .route("/v1/responses", post(messages))
+            .route("/v1/chat/completions", post(messages))
             .route("/v1/models", get(models))
             .with_state(shared.clone());
         let listener = tokio::net::TcpListener::bind(addr).await?;

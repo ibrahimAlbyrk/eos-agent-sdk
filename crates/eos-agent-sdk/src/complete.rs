@@ -189,7 +189,7 @@ fn wire_request(
         }
         None => (None, None),
     };
-    let provider = profile.provider.id();
+    let provider = Provider::id_of(model);
     Ok(ModelRequest {
         model: model.to_owned(),
         auth: request.auth.as_ref().map(|auth| RequestAuth { provider: provider.clone(), source: Arc::clone(&auth.0) }),

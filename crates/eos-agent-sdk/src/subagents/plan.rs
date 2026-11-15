@@ -14,6 +14,7 @@ use eos_agent_skills::ListingBudget;
 use eos_agent_types::{ContentBlock, Role};
 
 use crate::context::{ContextFacts, session_context};
+use crate::profile::Provider;
 use crate::registry::Blueprint;
 use crate::services::Services;
 use crate::{spawn, toolbox};
@@ -117,9 +118,10 @@ pub(super) fn fresh(services: &Services, parent: &Blueprint, request: &SubagentR
         config.reminder_sources =
             spawn::reminders(services, &parent.project, ListingBudget::for_context_window(context_window));
     }
-    if own.provider != parent_profile.provider {
+    let provider = Provider::id_of(&model);
+    if provider != Provider::id_of(&parent.config.model) {
         // Another provider: its own request shape (the tree keeps its cache key).
-        config.provider = Some(own.provider.id());
+        config.provider = Some(provider);
         config.cache_ttl = own.cache_ttl;
         config.extra = spawn::request_extra(own, &parent.project, config.cache_key.as_deref().unwrap_or_default());
     }

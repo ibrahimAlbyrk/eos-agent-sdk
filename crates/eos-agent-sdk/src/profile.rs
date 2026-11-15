@@ -12,24 +12,36 @@ use std::sync::Arc;
 use bytes::Bytes;
 use eos_agent_core::{CacheTtl, ProviderId, SystemPrompt, Tool};
 
-/// The API a model runs on.
+/// The kind of API a model runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provider {
     Anthropic,
     /// A ChatGPT plan through Sign in with ChatGPT.
     OpenAi,
+    /// A provider the host configured ([`ProviderConfig`](crate::ProviderConfig)):
+    /// its models are named `<provider>/<model>`.
+    Other,
 }
 
 impl Provider {
     /// The provider of a model id or alias.
     pub fn of(model: &str) -> Self {
-        if eos_agent_openai::is_openai_model(model) { Self::OpenAi } else { Self::Anthropic }
+        if eos_agent_openai::is_openai_model(model) {
+            return Self::OpenAi;
+        }
+        match model.split_once('/') {
+            Some((provider, _)) if provider != eos_agent_anthropic::PROVIDER => Self::Other,
+            _ => Self::Anthropic,
+        }
     }
 
-    pub fn id(self) -> ProviderId {
-        ProviderId::new(match self {
+    /// The name of the provider `model` runs on, as credentials and recorded
+    /// replies carry it.
+    pub fn id_of(model: &str) -> ProviderId {
+        ProviderId::new(match Self::of(model) {
             Self::Anthropic => eos_agent_anthropic::PROVIDER,
             Self::OpenAi => eos_agent_openai::PROVIDER,
+            Self::Other => model.split_once('/').map_or(model, |(provider, _)| provider),
         })
     }
 
@@ -37,6 +49,7 @@ impl Provider {
         match self {
             Self::Anthropic => "Anthropic",
             Self::OpenAi => "OpenAI",
+            Self::Other => "a provider",
         }
     }
 }

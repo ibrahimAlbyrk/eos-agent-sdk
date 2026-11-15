@@ -123,15 +123,15 @@ impl SdkAgent {
             effort,
             blueprint.thinking_summaries,
         )?;
-        let provider = Provider::of(&model);
-        let moved = Provider::of(&blueprint.config.model) != provider;
-        let own = || services.own_auth(provider).filter(|_| moved);
+        let provider = Provider::id_of(&model);
+        let moved = Provider::id_of(&blueprint.config.model) != provider;
+        let own = || services.own_auth(&model).filter(|_| moved);
         let session = change
             .auth
             .or_else(own)
             .map(|source| SessionAuth::new(self.handle.id(), source, services.auth_failover.clone()));
         config.auth = match &session {
-            Some(session) => Some(session.for_requests(provider)),
+            Some(session) => Some(session.for_requests(provider.clone())),
             None => blueprint.config.auth.clone().filter(|_| !moved),
         };
         let fits = config.compaction.as_ref().and_then(|c| c.threshold_tokens).unwrap_or(context_window);

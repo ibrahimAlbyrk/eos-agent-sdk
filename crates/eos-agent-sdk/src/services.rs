@@ -20,6 +20,7 @@ use crate::git;
 use crate::models;
 use crate::profile::{ModelProfile, Provider};
 use crate::project::Project;
+use crate::providers::{Providers, Registered};
 use crate::registry::Registry;
 use crate::shared::SharedContexts;
 use crate::stamps::stamp;
@@ -54,6 +55,9 @@ pub(crate) struct Services {
     /// The credential of agents that were given none, per provider.
     pub(crate) claude_auth: Option<Arc<dyn TokenSource>>,
     pub(crate) openai_auth: Option<Arc<dyn TokenSource>>,
+    /// The providers the host configured, and the prompt and tools their models get.
+    pub(crate) others: Arc<Providers>,
+    pub(crate) other_profile: ModelProfile,
     /// Asked for another credential when an agent's stops working.
     pub(crate) auth_failover: Option<Arc<dyn crate::auth::AuthFailover>>,
     /// Shared by every agent.
@@ -154,17 +158,24 @@ pub(crate) struct ClaudeModels {
 impl Services {
     /// The SDK's own credential for `provider`, which an agent without one
     /// of its own runs on.
-    pub(crate) fn own_auth(&self, provider: Provider) -> Option<Arc<dyn TokenSource>> {
-        match provider {
+    pub(crate) fn own_auth(&self, model: &str) -> Option<Arc<dyn TokenSource>> {
+        match Provider::of(model) {
             Provider::Anthropic => self.claude_auth.clone(),
             Provider::OpenAi => self.openai_auth.clone(),
+            Provider::Other => self.other(model).map(|p| Arc::clone(&p.auth)),
         }
+    }
+
+    /// The provider the host configured that `model` is one of.
+    fn other(&self, model: &str) -> Option<Arc<Registered>> {
+        (Provider::of(model) == Provider::Other).then(|| self.others.get(&Provider::id_of(model))).flatten()
     }
 
     /// The profile for `model` (`None`: its provider has no credential here).
     pub(crate) fn profile(&self, model: &str) -> Option<&ModelProfile> {
         match Provider::of(model) {
             Provider::OpenAi => self.openai.as_ref().map(|o| &o.profile),
+            Provider::Other => self.other(model).map(|_| &self.other_profile),
             Provider::Anthropic => self.claude.as_ref().map(|c| match models::known(model) {
                 Some(m) if m.early_stopping_guidance() => &c.early_stopping,
                 Some(m) if !m.lean_prompt() && models::explains_system_turns(model) => &c.full_turns,
@@ -190,6 +201,9 @@ impl Services {
 
     /// `max_tokens` and the context window for `model`.
     pub(crate) fn limits(&self, model: &str) -> (u32, u64) {
+        if let Some(provider) = self.other(model) {
+            return (provider.max_tokens, provider.context_window);
+        }
         match self.openai_catalog(model) {
             Some(catalog) => models::openai_limits(&catalog, model),
             None => models::limits(model),
@@ -197,6 +211,11 @@ impl Services {
     }
 
     pub(crate) fn effort_for(&self, model: &str, wanted: Option<&str>) -> Option<String> {
+        if Provider::of(model) == Provider::Other {
+            // The levels every server with an effort takes.
+            let level = |e: &str| if matches!(e, "xhigh" | "max") { "high".to_owned() } else { e.to_owned() };
+            return self.other(model).filter(|p| p.effort).and(wanted).map(level);
+        }
         match self.openai_catalog(model) {
             Some(catalog) => catalog.effort(eos_agent_openai::models::slug(model), wanted),
             None => models::effort_for(model, wanted),
@@ -204,6 +223,9 @@ impl Services {
     }
 
     pub(crate) fn thinking_for(&self, model: &str, summarized: bool, max_tokens: u32) -> Option<Thinking> {
+        if Provider::of(model) == Provider::Other {
+            return None;
+        }
         match self.openai_catalog(model) {
             Some(catalog) => {
                 let offers = catalog.get(eos_agent_openai::models::slug(model)).is_none_or(|m| m.summaries);
@@ -216,7 +238,12 @@ impl Services {
     /// Whether `model` takes mid-conversation `role: "system"` messages (an
     /// OpenAI request turns them into developer messages either way).
     pub(crate) fn system_turns(&self, model: &str) -> bool {
-        Provider::of(model) == Provider::OpenAi || models::takes_system_turns(model)
+        match Provider::of(model) {
+            Provider::OpenAi => true,
+            Provider::Anthropic => models::takes_system_turns(model),
+            // Not every server takes a system message after the first.
+            Provider::Other => false,
+        }
     }
 
     /// Claude Code's tool-change betas for `model`: on the Anthropic API for
@@ -234,6 +261,9 @@ impl Services {
 
     /// What the session context says about `model`.
     pub(crate) fn model_info(&self, model: &str) -> ModelInfo {
+        if Provider::of(model) == Provider::Other {
+            return ModelInfo { id: model.to_owned(), marketing_name: None, knowledge_cutoff: None };
+        }
         match self.openai_catalog(model) {
             Some(catalog) => models::openai_info(&catalog, model),
             None => models::model_info(model),

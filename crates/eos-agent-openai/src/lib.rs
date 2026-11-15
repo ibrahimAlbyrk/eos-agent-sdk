@@ -9,6 +9,7 @@
 //! a thinking block's signature.
 
 pub mod auth;
+pub mod chat;
 mod errors;
 mod limits;
 pub mod models;

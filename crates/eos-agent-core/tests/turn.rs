@@ -776,3 +776,43 @@ async fn a_hosts_summary_comes_before_the_next_message_and_survives_a_rewind_to_
         ["SUMMARY: a.py was read", "<system-reminder>ctx</system-reminder>|again", "# Environment"]
     );
 }
+
+/// A summary the agent makes on its own opens the conversation again as a
+/// first message does: the session context leads it, and the system notes
+/// come right before the request that follows.
+#[tokio::test]
+async fn a_summary_keeps_the_session_context() {
+    use eos_agent_core::{Compaction, CompactionText};
+    #[derive(Debug)]
+    struct Words;
+    impl CompactionText for Words {
+        fn instruction(&self, _: Option<&str>) -> String {
+            "Summarize.".into()
+        }
+        fn seed(&self, summary: &str) -> String {
+            format!("Continued: {summary}")
+        }
+    }
+    let model = FakeModel::new([text("one"), text("SUMMARY"), text("two"), text("three")]);
+    let sink = Collect::default();
+    let mut a = with_environment_note(agent(vec![]));
+    let cancel = CancellationToken::new();
+    a.run_turn(user("hi"), deps(&model, &sink, &AllowAll), &cancel).await.expect("turn");
+    // Past the threshold from here on: the next request is preceded by a summary.
+    a.config_mut().compaction = Some(Compaction { threshold_tokens: Some(1), text: Arc::new(Words) });
+    a.run_turn(user("go on"), deps(&model, &sink, &AllowAll), &cancel).await.expect("turn");
+    assert_eq!(sink.count(|e| matches!(e, AgentEvent::Compacted { .. })), 1);
+    a.config_mut().compaction = Some(Compaction { threshold_tokens: None, text: Arc::new(Words) });
+    a.run_turn(user("again"), deps(&model, &sink, &AllowAll), &cancel).await.expect("turn");
+
+    let requests = model.requests.lock().expect("lock");
+    for request in requests.iter() {
+        assert_eq!(misplaced_system_turn(request), None, "{:?}", roles(request));
+    }
+    assert_eq!(roles(&requests[2]), ["user", "system"], "the summary, then the notes");
+    let opening = std::str::from_utf8(&requests[2].messages[0]).expect("utf8");
+    assert!(opening.contains("ctx") && opening.contains("Continued: SUMMARY"), "{opening}");
+    assert_eq!(roles(&requests[3]), ["user", "system", "assistant", "user"], "the context rides once");
+    let first = a.transcript()[0].blocks().expect("blocks");
+    assert!(matches!(&first[0], ContentBlock::Text { text, .. } if text.contains("ctx")));
+}

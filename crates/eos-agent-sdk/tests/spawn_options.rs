@@ -110,8 +110,9 @@ async fn the_host_sets_where_and_in_which_words_a_conversation_is_summarized() {
     assert_eq!(requests.len(), 3, "a turn, the summary, the second turn");
     assert!(all_text(&requests[1]).contains("HOST: summarize briefly."));
     let after = requests[2].json();
-    let messages = after["messages"].as_array().expect("messages");
-    assert_eq!(messages.len(), 1, "the summary took the conversation's place");
+    let roles: Vec<&str> =
+        after["messages"].as_array().expect("messages").iter().filter_map(|m| m["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "system"], "the summary took the conversation's place, the session notes after it");
     assert!(all_text(&requests[2]).contains("HOST SUMMARY: the summary"));
 }
 
@@ -130,7 +131,13 @@ async fn without_auto_compaction_only_the_host_summarizes() {
     agent.send_text("third").await.expect("alive").expect("turn");
     let requests = mock.requests();
     assert!(all_text(&requests[2]).contains("the API names"), "the host's focus is in the instruction");
-    assert_eq!(requests[3].json()["messages"].as_array().map(Vec::len), Some(2), "the summary, then the new message");
+    let roles: Vec<String> = requests[3].json()["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .filter_map(|m| m["role"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(roles, ["user", "user", "system"], "the summary, the new message, the session notes");
 }
 
 #[tokio::test]
@@ -147,7 +154,9 @@ async fn a_prompt_the_api_finds_too_long_is_summarized_once_and_sent_again() {
     let requests = mock.requests();
     assert_eq!(requests.len(), 4, "a turn, the refused request, the summary, the request again");
     let again = requests[3].json();
-    assert_eq!(again["messages"].as_array().map(Vec::len), Some(1), "the summary took the conversation's place");
+    let roles: Vec<&str> =
+        again["messages"].as_array().expect("messages").iter().filter_map(|m| m["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "system"], "the summary took the conversation's place, the session notes after it");
     assert!(all_text(&requests[3]).contains("the summary"));
     let mut compacted = 0;
     while let Ok(event) = events.try_recv() {

@@ -93,13 +93,18 @@ impl Agent {
             return Err(ModelError::Transient("the summary came back empty".into()).into());
         }
 
-        let seed = StoredMessage::user_text(compaction.text.seed(&summary));
+        // The summary opens the conversation again as a first input does: the
+        // session context's prefix (CLAUDE.md, the date) in front of it, and
+        // its system notes before the next request.
+        let mut blocks: Vec<ContentBlock> = self.session.as_ref().map(|s| s.user_prefix.to_vec()).unwrap_or_default();
+        blocks.push(ContentBlock::Text { text: compaction.text.seed(&summary), citations: None });
+        let seed = StoredMessage::new(Role::User, &blocks)?;
         if let Some(store) = deps.store {
             store.replace(&self.id, std::slice::from_ref(&seed)).await?;
         }
         self.transcript.clear();
         self.transcript.push(seed.clone());
-        self.session_notes_due = false;
+        self.session_notes_due = self.session.is_some();
         self.announced.forget_inline();
         self.latch_tool_changes();
         self.last_usage = Usage::default();

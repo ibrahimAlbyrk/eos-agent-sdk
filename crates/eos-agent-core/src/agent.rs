@@ -376,6 +376,8 @@ impl Agent {
             }
             if self.needs_compaction() {
                 self.compact(None, deps, cancel).await?;
+                // The summary reopened the conversation: its session notes go before the request.
+                self.push_session_notes(deps).await?;
             }
             let streamed = match self.send(deps, cancel).await {
                 // The provider counted more than our estimate did: summarize

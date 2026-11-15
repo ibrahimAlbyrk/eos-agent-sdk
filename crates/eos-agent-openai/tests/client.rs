@@ -277,6 +277,24 @@ async fn a_silent_stream_is_given_up() {
 }
 
 #[tokio::test]
+async fn a_response_that_never_starts_is_stalled() {
+    // Takes the request and never answers, as a connection that died unnoticed.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base_url = format!("http://{}/v1", listener.local_addr().expect("addr"));
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    let config = ClientConfig { base_url, idle_timeout: Duration::from_millis(200), ..ClientConfig::default() };
+    let client = OpenAiClient::new(bearer("tok"), config).expect("client");
+    let req = request(&[StoredMessage::user_text("hi")]);
+    let out = tokio::time::timeout(Duration::from_secs(5), run(&client, &req)).await.expect("bounded");
+    assert!(matches!(out, Err(ModelError::Stalled)), "{out:?}");
+}
+
+#[tokio::test]
 async fn the_catalog_lists_the_accounts_models() {
     let mock = MockApi::start([]).await.expect("mock");
     mock.set_models(json!({"models": [{"slug": "gpt-6-sol", "display_name": "GPT-6 Sol", "visibility": "list"}]}));

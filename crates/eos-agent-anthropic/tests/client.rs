@@ -111,6 +111,33 @@ async fn a_prompt_over_the_context_window_is_its_own_error() {
     }
 }
 
+/// Takes requests and never answers, as a connection that died unnoticed.
+async fn silent_server() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_response_that_never_starts_is_stalled() {
+    let config = ClientConfig {
+        base_url: silent_server().await,
+        idle_timeout: std::time::Duration::from_millis(200),
+        ..ClientConfig::default()
+    };
+    let c = AnthropicClient::new(key(), config).expect("client");
+    let out = tokio::time::timeout(std::time::Duration::from_secs(5), collect(&c)).await.expect("bounded");
+    let error = out.expect_err("no answer");
+    assert!(matches!(error, ModelError::Stalled), "{error:?}");
+    assert!(error.is_retryable());
+}
+
 /// Hands out "old" first; after a refusal, "new".
 #[derive(Default)]
 struct Rotating(AtomicU32);

@@ -39,6 +39,10 @@ pub const PROVIDER: &str = "openai";
 /// How many times one request moves to another credential after its own
 /// stopped working.
 const MAX_CREDENTIAL_CHANGES: u32 = 8;
+/// HTTP/2 pings on every pooled connection, busy or idle, so one that died
+/// with a sleep or a network change is dropped instead of reused.
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -100,7 +104,10 @@ impl OpenAiClient {
     pub fn new(auth: Arc<dyn TokenSource>, config: ClientConfig) -> Result<Self, ModelError> {
         let mut http = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
-            .pool_idle_timeout(Duration::from_secs(90));
+            .pool_idle_timeout(Duration::from_secs(90))
+            .http2_keep_alive_interval(KEEP_ALIVE_INTERVAL)
+            .http2_keep_alive_timeout(KEEP_ALIVE_TIMEOUT)
+            .http2_keep_alive_while_idle(true);
         if config.http2_prior_knowledge {
             http = http.http2_prior_knowledge();
         }
@@ -144,10 +151,12 @@ impl OpenAiClient {
     ) -> Result<reqwest::Response, ModelError> {
         let mut renewed = false;
         loop {
-            let res = build(cred)
-                .header("user-agent", &self.config.user_agent)
-                .send()
+            // A connection that died unnoticed never answers: waiting for the
+            // response to start is bounded like a silent stream.
+            let send = build(cred).header("user-agent", &self.config.user_agent).send();
+            let res = tokio::time::timeout(self.config.idle_timeout, send)
                 .await
+                .map_err(|_| ModelError::Stalled)?
                 .map_err(|e| ModelError::Transient(e.to_string()))?;
             if res.status().as_u16() == 401 && !renewed && auth.refused(cred).await {
                 renewed = true;
@@ -193,7 +202,11 @@ impl OpenAiClient {
                 return Ok(events(res, self.config.idle_timeout));
             }
             let headers = res.headers().clone();
-            let text = res.text().await.unwrap_or_default();
+            let text = tokio::time::timeout(self.config.idle_timeout, res.text())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
             let error = with_request_id(errors::from_status(status, &headers, &text, info), &headers);
             // The credential is used up or signed out: the source may have another.
             let unusable = matches!(error, ModelError::LimitReached { .. } | ModelError::Auth(_));

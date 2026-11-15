@@ -46,6 +46,8 @@ pub(super) struct OpenAiSetup {
     pub(super) auth: Arc<dyn TokenSource>,
     pub(super) store: Option<PathBuf>,
     pub(super) client: eos_agent_openai::ClientConfig,
+    /// Building waits for the account's models.
+    pub(super) read_models_first: bool,
 }
 
 /// How long building waits for the OpenAI model catalog.
@@ -153,6 +155,14 @@ impl SdkBuilder {
         self
     }
 
+    /// Builds without reading the ChatGPT account's models first: the ones
+    /// kept from an earlier run hold until they are read, when a model is
+    /// first used or [`Sdk::openai_models`](crate::Sdk::openai_models) asks.
+    pub fn openai_models_later(mut self) -> Self {
+        self.openai_setup().read_models_first = false;
+        self
+    }
+
     /// How function tools are placed in OpenAI requests (default: one namespace).
     pub fn openai_tool_placement(mut self, placement: ToolPlacement) -> Self {
         self.openai_setup().client.tools = placement;
@@ -165,6 +175,7 @@ impl SdkBuilder {
             auth: Arc::new(ChatGptLogin::new(std::env::temp_dir().join("eos-agent-chatgpt"))),
             store: None,
             client: eos_agent_openai::ClientConfig { http2_prior_knowledge: http2, ..Default::default() },
+            read_models_first: true,
         })
     }
 

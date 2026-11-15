@@ -28,7 +28,9 @@ impl SdkBuilder {
                 let catalog = ModelCatalog::new(Arc::clone(&client), setup.store.as_deref());
                 // Read before the first agent starts; a failure (or a slow
                 // answer) keeps the cached catalog, or none.
-                let _ = tokio::time::timeout(CATALOG_WAIT, catalog.ensure()).await;
+                if setup.read_models_first {
+                    let _ = tokio::time::timeout(CATALOG_WAIT, catalog.ensure()).await;
+                }
                 (Some(client), Some(catalog))
             }
             None => (None, None),

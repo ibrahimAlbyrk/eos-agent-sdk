@@ -103,6 +103,17 @@ impl Sdk {
         self.services.registry.handle(id).inspect(AgentHandle::interrupt).is_some()
     }
 
+    /// The models of the ChatGPT account, read again when the list held is
+    /// stale (`None`: OpenAI models are not set up; empty: none was read yet).
+    pub async fn openai_models(&self) -> Option<Arc<eos_agent_openai::Catalog>> {
+        Some(self.services.openai.as_ref()?.catalog.ensure().await)
+    }
+
+    /// The context window an agent on `model` (an id or alias) gets, in tokens.
+    pub fn context_window(&self, model: &str) -> u64 {
+        self.services.limits(&self.services.resolve_model(model)).1
+    }
+
     /// `id`'s tree: the agent itself and every subagent below it.
     pub fn agent_tree(&self, id: &str) -> Vec<AgentInfo> {
         self.services.registry.infos(Some(id))

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
-use eos_agent_core::{BoxFuture, StoredMessage, TranscriptStore};
+use eos_agent_core::{BoxFuture, Origin, ProviderId, StoredMessage, TranscriptStore};
 use eos_agent_types::{Role, Usage};
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -9,9 +9,10 @@ use tokio::io::AsyncWriteExt;
 
 /// One JSONL file per agent, one message per line: the message in wire form
 /// (`{"role","content"}`), then, as in Claude Code's transcript entries, the
-/// response's `usage` on an assistant message, `isMeta` on the host's context
-/// and the line's `timestamp` (ISO 8601, UTC). Reading back keeps only `role`
-/// and `content`, so the model receives the same bytes as before. Files are opened per append, so
+/// response's `usage` on an assistant message, `isMeta` on the host's context,
+/// `source` (the provider and model that wrote an assistant message) and the
+/// line's `timestamp` (ISO 8601, UTC). Reading back keeps only `role` and
+/// `content`, so the model receives the same bytes as before. Files are opened per append, so
 /// thousands of agents hold no open descriptors.
 #[derive(Debug, Clone)]
 pub struct JsonlStore {
@@ -61,8 +62,9 @@ async fn read_all(path: &Path) -> std::io::Result<Vec<StoredMessage>> {
 }
 
 /// One line back into its message: a bare wire message as it is, a line with
-/// `usage`/`isMeta`/`timestamp` cut back to `{"role":…,"content":…}` (the
-/// content's bytes untouched), its time and meta mark kept beside it.
+/// `usage`/`isMeta`/`source`/`timestamp` cut back to `{"role":…,"content":…}`
+/// (the content's bytes untouched), its time, meta mark and origin kept
+/// beside it.
 fn parse_line(line: Bytes) -> Result<StoredMessage, eos_agent_core::MessageError> {
     #[derive(Deserialize)]
     struct Line<'a> {
@@ -73,21 +75,31 @@ fn parse_line(line: Bytes) -> Result<StoredMessage, eos_agent_core::MessageError
         timestamp: Option<&'a str>,
         #[serde(default, rename = "isMeta")]
         is_meta: bool,
+        #[serde(default, borrow)]
+        source: Option<Source<'a>>,
     }
     let Ok(parsed) = serde_json::from_slice::<Line<'_>>(&line) else {
         return StoredMessage::from_wire(line);
     };
     let at = parsed.timestamp.and_then(parse_timestamp);
+    let origin = parsed.source.map(|s| Origin { provider: ProviderId::new(s.provider), model: s.model.into() });
     if parsed.timestamp.is_none() && line.ends_with(b"}]}") {
         return StoredMessage::from_wire(line).map(|m| m.with_recorded_ms(at));
     }
     let role = serde_json::to_string(&parsed.role)?;
     let wire = format!(r#"{{"role":{role},"content":{}}}"#, parsed.content.get());
-    StoredMessage::from_wire(Bytes::from(wire)).map(|m| m.with_recorded_ms(at).with_meta(parsed.is_meta))
+    StoredMessage::from_wire(Bytes::from(wire))
+        .map(|m| m.with_recorded_ms(at).with_meta(parsed.is_meta).with_origin(origin))
 }
 
-/// The line for `message`: its wire bytes with `usage`, `isMeta` and
-/// `timestamp` added.
+#[derive(Deserialize, serde::Serialize)]
+struct Source<'a> {
+    provider: &'a str,
+    model: &'a str,
+}
+
+/// The line for `message`: its wire bytes with `usage`, `isMeta`, `source`
+/// and `timestamp` added.
 fn entry_line(message: &StoredMessage, usage: Option<&Usage>, now_ms: u64) -> Vec<u8> {
     let json = message.json();
     let mut line = Vec::with_capacity(json.len() + 160);
@@ -98,15 +110,25 @@ fn entry_line(message: &StoredMessage, usage: Option<&Usage>, now_ms: u64) -> Ve
         line.extend_from_slice(br#","usage":"#);
         line.extend_from_slice(&usage);
     }
-    if message.is_meta() {
-        line.extend_from_slice(META);
-    }
+    push_marks(&mut line, message);
     line.extend_from_slice(format!(r#","timestamp":"{}"}}"#, format_timestamp(now_ms)).as_bytes());
     line.push(b'\n');
     line
 }
 
 const META: &[u8] = br#","isMeta":true"#;
+
+/// What a line keeps about `message` besides its wire bytes and time.
+fn push_marks(line: &mut Vec<u8>, message: &StoredMessage) {
+    if message.is_meta() {
+        line.extend_from_slice(META);
+    }
+    let source = message.origin().map(|o| Source { provider: o.provider.as_str(), model: &o.model });
+    if let Some(source) = source.and_then(|s| serde_json::to_vec(&s).ok()) {
+        line.extend_from_slice(br#","source":"#);
+        line.extend_from_slice(&source);
+    }
+}
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -201,14 +223,9 @@ impl TranscriptStore for JsonlStore {
             let mut body = Vec::new();
             for m in messages {
                 let json = m.json();
-                if m.is_meta() {
-                    body.extend_from_slice(&json[..json.len() - 1]);
-                    body.extend_from_slice(META);
-                    body.push(b'}');
-                } else {
-                    body.extend_from_slice(json);
-                }
-                body.push(b'\n');
+                body.extend_from_slice(&json[..json.len() - 1]);
+                push_marks(&mut body, m);
+                body.extend_from_slice(b"}\n");
             }
             let tmp = path.with_extension("jsonl.tmp");
             tokio::fs::write(&tmp, body).await?;
@@ -253,6 +270,13 @@ mod tests {
         let back = parse_line(Bytes::from(line[..line.len() - 1].to_vec())).expect("parse");
         assert_eq!(back.json(), message.json(), "the model gets the same bytes");
         assert_eq!(back.recorded_ms(), Some(1_794_132_672_345));
+        assert_eq!(back.origin(), None);
+        let origin = Origin { provider: ProviderId::new("openai"), model: "gpt-5.5".into() };
+        let signed = message.clone().with_origin(Some(origin.clone()));
+        let line = entry_line(&signed, Some(&usage), 1);
+        let back = parse_line(Bytes::from(line[..line.len() - 1].to_vec())).expect("parse");
+        assert_eq!(back.json(), message.json());
+        assert_eq!(back.origin(), Some(&origin), "who wrote it stays beside the bytes");
         // Lines written before usage and time were kept still load.
         let old = parse_line(message.json().clone()).expect("old line");
         assert_eq!(old.json(), message.json());

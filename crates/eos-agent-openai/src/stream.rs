@@ -30,6 +30,13 @@ pub(crate) fn unseal(signature: &str) -> Option<(&str, &str)> {
     (!id.is_empty() && !encrypted.is_empty()).then_some((id, encrypted))
 }
 
+/// Did this adapter write the assistant message `json` (wire bytes)? Known
+/// by the reasoning it holds, so a reply without reasoning says no.
+pub fn wrote(json: &[u8]) -> bool {
+    let sealed = format!(r#""signature":"{SEAL}"#);
+    json.windows(sealed.len()).any(|w| w == sealed.as_bytes())
+}
+
 /// What one output item became.
 #[derive(Debug)]
 struct Item {

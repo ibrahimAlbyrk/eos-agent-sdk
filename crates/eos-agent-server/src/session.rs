@@ -389,7 +389,7 @@ fn command_json(c: &CommandInfo) -> Value {
 fn control_failed(e: &ControlError) -> RpcError {
     match e {
         ControlError::Gone(g) => gone(g),
-        ControlError::Store(_) => RpcError::new(rpc::TURN_FAILED, e.to_string()),
+        ControlError::Store(_) | ControlError::Compact(_) => RpcError::new(rpc::TURN_FAILED, e.to_string()),
         _ => RpcError::params(e.to_string()),
     }
 }

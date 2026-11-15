@@ -130,11 +130,7 @@ impl SessionAuth {
 
     /// As a request's credential for `provider`.
     pub(crate) fn for_requests(self: &Arc<Self>, provider: Provider) -> RequestAuth {
-        let provider = match provider {
-            Provider::Anthropic => eos_agent_anthropic::PROVIDER,
-            Provider::OpenAi => eos_agent_openai::PROVIDER,
-        };
-        RequestAuth { provider, source: Arc::clone(self) as Arc<dyn TokenSource> }
+        RequestAuth { provider: provider.id(), source: Arc::clone(self) as Arc<dyn TokenSource> }
     }
 
     pub(crate) fn set(&self, source: Arc<dyn TokenSource>) {

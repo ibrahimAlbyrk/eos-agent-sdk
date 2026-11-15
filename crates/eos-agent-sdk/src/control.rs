@@ -1,33 +1,52 @@
 //! What a host changes about a live agent: its model and effort, where its
 //! conversation ends (rewind, fork), and its background tasks.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
-use eos_agent_core::{AgentEvent, RewindError, StopOrigin, StopRefused, StoredMessage, check_cut};
+use eos_agent_core::{
+    AgentEvent, RewindError, StopOrigin, StopRefused, StoredMessage, TokenSource, TurnError, check_cut,
+};
 use eos_agent_engine::{AgentUpdate, Gone};
 use tokio::sync::mpsc;
 
 use crate::agent::SdkAgent;
+use crate::auth::SessionAuth;
 use crate::options::AgentOptions;
 use crate::profile::Provider;
 use crate::registry::Blueprint;
 use crate::sdk::{Sdk, SdkError};
-use crate::spawn::{ModelSetup, model_setup};
+use crate::spawn::{Asked, ModelSetup, model_setup};
 
 /// Why a live agent could not be changed.
 #[derive(Debug, thiserror::Error)]
 pub enum ControlError {
     #[error(transparent)]
     Gone(#[from] Gone),
-    /// A conversation stays on the provider it started on.
-    #[error("{model} runs on {}, and a conversation never changes provider", provider.name())]
-    ProviderChange { model: String, provider: Provider },
+    /// The conversation did not fit the new model and could not be summarized first.
+    #[error("the conversation could not be summarized for the new model: {0}")]
+    Compact(TurnError),
     #[error(transparent)]
     Rewind(#[from] RewindError),
     #[error("could not read the conversation: {0}")]
     Store(std::io::Error),
     #[error(transparent)]
     Sdk(#[from] SdkError),
+}
+
+/// What changes with an agent's model besides the model.
+#[derive(Default)]
+pub struct ModelChange {
+    /// The agent's own credential for the new model's provider (`None`: the
+    /// one it has when the provider stays, else the SDK's for that provider).
+    pub auth: Option<Arc<dyn TokenSource>>,
+    /// Where the conversation is summarized from now on (`None`: as set at spawn).
+    pub compact_at: Option<u64>,
+}
+
+impl std::fmt::Debug for ModelChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelChange").field("compact_at", &self.compact_at).finish_non_exhaustive()
+    }
 }
 
 /// Why a background task was not stopped.
@@ -75,39 +94,66 @@ impl SdkAgent {
     /// tools, limits). It holds until changed again, through history
     /// eviction, and subagents started later inherit it; ones already
     /// running keep theirs. A host that spawns the agent again (to resume
-    /// it) passes the model itself. The conversation stays on its provider.
+    /// it) passes the model itself.
     pub async fn set_model(&self, model: &str) -> Result<(), ControlError> {
+        self.set_model_with(model, ModelChange::default()).await.map(|_| ())
+    }
+
+    /// [`set_model`](Self::set_model), also onto another provider. The
+    /// conversation is kept as it was written: the new provider gets it
+    /// without the reasoning of the others (which only they can read), and
+    /// each gets its own back whenever the agent returns to it. A
+    /// conversation too long for the new model is summarized first, by the
+    /// model it is on. True when it was.
+    pub async fn set_model_with(&self, model: &str, change: ModelChange) -> Result<bool, ControlError> {
         let services = &self.services;
         let blueprint = self.blueprint()?;
         let model = services.resolve_model(model);
-        if Provider::of(&model) != Provider::of(&blueprint.config.model) {
-            return Err(ControlError::ProviderChange { provider: Provider::of(&model), model });
-        }
+        let asked = match change.compact_at {
+            Some(at) => Arc::new(Asked { compact_at: Some(at), ..(*blueprint.asked).clone() }),
+            None => Arc::clone(&blueprint.asked),
+        };
         let effort = blueprint.session_effort.as_deref();
         let ModelSetup { mut config, system, recipe, context_window } = model_setup(
             services,
             &blueprint.project,
-            &blueprint.asked,
+            &asked,
             self.handle.id(),
             &model,
             effort,
             blueprint.thinking_summaries,
         )?;
+        let provider = Provider::of(&model);
+        let moved = Provider::of(&blueprint.config.model) != provider;
+        let own = || services.own_auth(provider).filter(|_| moved);
+        let session = change
+            .auth
+            .or_else(own)
+            .map(|source| SessionAuth::new(self.handle.id(), source, services.auth_failover.clone()));
+        config.auth = match &session {
+            Some(session) => Some(session.for_requests(provider)),
+            None => blueprint.config.auth.clone().filter(|_| !moved),
+        };
+        let fits = config.compaction.as_ref().and_then(|c| c.threshold_tokens).unwrap_or(context_window);
+        let held: u64 = self.transcript().await?.iter().map(StoredMessage::estimated_tokens).sum();
+        let summarized = held >= fits && self.handle.compact(None).await?.map_err(ControlError::Compact)?;
         let toolbox = match &blueprint.mcp_tools {
             Some(updates) => updates.set_recipe(recipe),
             None => blueprint.project.toolbox(&recipe, Vec::new()),
         };
         config.tool_source.clone_from(&blueprint.config.tool_source);
-        config.auth.clone_from(&blueprint.config.auth);
         let update = AgentUpdate {
             config: Some(config.clone()),
             system: Some(system.clone()),
             toolbox: Some(Arc::clone(&toolbox)),
         };
         self.handle.reconfigure(update).await?;
-        let changed = Blueprint { config, system, toolbox, context_window, ..(*blueprint).clone() };
+        if let Some(session) = session {
+            *self.auth.write().unwrap_or_else(PoisonError::into_inner) = Some(session);
+        }
+        let changed = Blueprint { config, system, toolbox, context_window, asked, ..(*blueprint).clone() };
         services.registry.set_blueprint(self.handle.id(), Arc::new(changed));
-        Ok(())
+        Ok(summarized)
     }
 
     /// Asks for `effort` (`low` … `max`; `None`: the model's default, as

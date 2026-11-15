@@ -3,8 +3,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use eos_agent_core::{
-    AgentConfig, AgentEvent, Compaction, CompactionText, Extensions, FailedServer, InternalPaths, ReminderSource,
-    ServerNotes, SubagentPort, SystemPrompt, TaskEvents, ToolSource, Toolbox,
+    AgentConfig, AgentEvent, Compaction, CompactionText, Extensions, FailedServer, InternalPaths, Origin,
+    ReminderSource, ServerNotes, StoredMessage, SubagentPort, SystemPrompt, TaskEvents, ToolSource, Toolbox,
 };
 use eos_agent_engine::AgentSpec;
 use eos_agent_mcp::{McpConfig, McpScope, McpServerConfig, McpToolset};
@@ -13,6 +13,7 @@ use eos_agent_skills::{ListingBudget, SkillListingReminder};
 use eos_agent_tools_session::{ConnectingServers, DeferredTool, McpConnecting, PendingServer, TaskListId};
 use eos_agent_tools_shell::{AgentSandbox, SandboxSession};
 use eos_agent_tools_web::{SearchBudget, SessionSearchBudget};
+use eos_agent_types::Role;
 use tokio::sync::mpsc;
 
 use crate::agent::SdkAgent;
@@ -29,7 +30,7 @@ use crate::toolbox::{ToolFilter, ToolRecipe};
 
 /// What the host asked for at spawn that holds for every agent of the tree,
 /// whatever model each runs on.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Asked {
     pub(crate) host_tools: Vec<HostTool>,
     pub(crate) filter: ToolFilter,
@@ -97,6 +98,7 @@ pub(crate) fn model_setup(
     let max_tokens = asked.max_tokens.unwrap_or(default_max);
     let context_window = asked.context_window.unwrap_or(default_window);
     let mut config = AgentConfig::new(model);
+    config.provider = Some(profile.provider.id());
     config.max_tokens = max_tokens;
     config.effort = services.effort_for(model, effort);
     config.thinking = services.thinking_for(model, thinking_summaries, max_tokens);
@@ -158,11 +160,7 @@ impl Sdk {
         let connecting = updates.clone().map(|u| McpConnecting(u as Arc<dyn ConnectingServers>));
         config.tool_source = updates.clone().map(|u| u as Arc<dyn ToolSource>);
         let provider = Provider::of(&model);
-        let own = match provider {
-            Provider::Anthropic => services.claude_auth.clone(),
-            Provider::OpenAi => services.openai_auth.clone(),
-        };
-        let auth = options.auth.map(|a| a.0).or(own).map(|source| {
+        let auth = options.auth.map(|a| a.0).or_else(|| services.own_auth(provider)).map(|source| {
             let session = SessionAuth::new(&id, source, services.auth_failover.clone());
             config.auth = Some(session.for_requests(provider));
             session
@@ -208,7 +206,7 @@ impl Sdk {
             sandbox: blueprint.sandbox.as_ref(),
         };
         let mut spec = agent_spec(services, &blueprint, id, None);
-        spec.history = options.history;
+        spec.history = with_origins(options.history);
         spec.session = Some(session_context(&facts, services));
         // Tools rebuild their state (re-arming artifact watches) once the
         // agent is registered as top-level.
@@ -219,6 +217,28 @@ impl Sdk {
         let _ = registered.send(());
         Ok((SdkAgent::new(handle, Arc::clone(services), project, mcp, auth), events))
     }
+}
+
+/// A recorded conversation with every reply's provider known: a transcript
+/// from before replies recorded theirs names it by the reasoning it holds
+/// (and no model).
+fn with_origins(history: Vec<StoredMessage>) -> Vec<StoredMessage> {
+    let origin = |m: &StoredMessage| {
+        let provider = if eos_agent_openai::wrote(m.json()) { Provider::OpenAi } else { Provider::Anthropic };
+        Origin { provider: provider.id(), model: "".into() }
+    };
+    let unsigned = |m: &StoredMessage| m.role() == Role::Assistant && m.origin().is_none();
+    history
+        .into_iter()
+        .map(|m| {
+            if unsigned(&m) {
+                let origin = origin(&m);
+                m.with_origin(Some(origin))
+            } else {
+                m
+            }
+        })
+        .collect()
 }
 
 /// Rebuilds a top-level agent's toolbox when its MCP servers' tools change

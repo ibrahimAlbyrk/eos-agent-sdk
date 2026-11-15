@@ -36,6 +36,8 @@ pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const SESSION_HEADER: &str = "session-id";
 /// What a [`RequestAuth`] for this client is labelled.
 pub const PROVIDER: &str = "openai";
+
+pub use stream::wrote;
 /// How many times one request moves to another credential after its own
 /// stopped working.
 const MAX_CREDENTIAL_CHANGES: u32 = 8;

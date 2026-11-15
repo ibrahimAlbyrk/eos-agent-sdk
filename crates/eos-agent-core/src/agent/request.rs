@@ -28,15 +28,24 @@ impl Agent {
         // A turn on a model without system turns (a command's model) gets the
         // tools in the array, the notes folded into user text.
         let inline = self.config.system_turns;
+        let readable;
+        let transcript: &[StoredMessage] =
+            match self.config.provider.as_ref().and_then(|p| super::handoff::for_provider(&self.transcript, p)) {
+                Some(without) => {
+                    readable = without;
+                    &readable
+                }
+                None => &self.transcript,
+            };
         let rewritten;
-        let history: &[StoredMessage] = if !inline && self.transcript.iter().any(|m| m.role() == Role::System) {
-            rewritten = fold_system_turns(&self.transcript);
+        let history: &[StoredMessage] = if !inline && transcript.iter().any(|m| m.role() == Role::System) {
+            rewritten = fold_system_turns(transcript);
             &rewritten
-        } else if let Some(wire) = inline.then(|| self.announced.wire_history(&self.transcript)).flatten() {
+        } else if let Some(wire) = inline.then(|| self.announced.wire_history(transcript)).flatten() {
             rewritten = wire;
             &rewritten
         } else {
-            &self.transcript
+            transcript
         };
         let placed;
         let history = match system_turns_before_replies(history) {

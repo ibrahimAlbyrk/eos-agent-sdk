@@ -44,12 +44,33 @@ pub trait TokenSource: Send + Sync {
     fn observe(&self, _limits: &RateLimitInfo) {}
 }
 
+/// The name of a configured provider (`anthropic`, `openai`, a user's own
+/// endpoint): what routes a request to its client and labels a credential.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProviderId(Arc<str>);
+
+impl ProviderId {
+    pub fn new(id: &str) -> Self {
+        Self(Arc::from(id))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The credential a request (and the agent sending it) uses instead of the
 /// client's own. A client ignores one made for another provider.
 #[derive(Clone)]
 pub struct RequestAuth {
-    /// The API the credential is for, as its client names itself.
-    pub provider: &'static str,
+    /// The provider the credential is for, as its client names itself.
+    pub provider: ProviderId,
     pub source: Arc<dyn TokenSource>,
 }
 
@@ -64,7 +85,7 @@ impl RequestAuth {
     /// for that provider, else the client's `own`.
     pub fn choose<'a>(request: Option<&'a Self>, provider: &str, own: &'a Arc<dyn TokenSource>) -> &'a dyn TokenSource {
         match request {
-            Some(auth) if auth.provider == provider => &*auth.source,
+            Some(auth) if auth.provider.as_str() == provider => &*auth.source,
             _ => &**own,
         }
     }

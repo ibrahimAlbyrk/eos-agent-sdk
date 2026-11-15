@@ -27,10 +27,10 @@ pub use agent::{
     check_cut, instructions_section, server_paragraphs,
 };
 pub use assembler::{Assembled, Assembler, Emitted};
-pub use auth::{Credential, RequestAuth, SecretStore, StaticCredential, TokenSource};
+pub use auth::{Credential, ProviderId, RequestAuth, SecretStore, StaticCredential, TokenSource};
 pub use context::{Compaction, CompactionText, ReminderSource, SessionContext};
 pub use extensions::Extensions;
-pub use message::{CacheTtl, MessageError, StoredMessage, SystemPrompt};
+pub use message::{CacheTtl, MessageError, Origin, StoredMessage, SystemPrompt};
 pub use model::{EventStream, LiveRequest, ModelClient, ModelError, ModelRequest, RateLimitInfo, Thinking};
 pub use modes::{DeclaredMode, PermissionMode, always_plan, resolve_chain, resolve_mode};
 pub use ports::{

@@ -119,6 +119,7 @@ pub(super) fn fresh(services: &Services, parent: &Blueprint, request: &SubagentR
     }
     if own.provider != parent_profile.provider {
         // Another provider: its own request shape (the tree keeps its cache key).
+        config.provider = Some(own.provider.id());
         config.cache_ttl = own.cache_ttl;
         config.extra = spawn::request_extra(own, &parent.project, config.cache_key.as_deref().unwrap_or_default());
     }

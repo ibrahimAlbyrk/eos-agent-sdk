@@ -14,7 +14,7 @@ use eos_agent_core::{
 };
 use eos_agent_engine::JsonlStore;
 use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{Account, AgentOptions, ControlError, HostTool, Provider, StopTaskError};
+use eos_agent_sdk::{Account, AgentOptions, ControlError, HostTool, Provider, SdkError, StopTaskError};
 use serde_json::value::RawValue;
 
 #[tokio::test]
@@ -51,8 +51,8 @@ async fn a_model_change_holds_for_later_turns_and_new_subagents() {
     let kept = requests[1].json()["messages"].as_array().map(Vec::len);
     assert_eq!(kept, Some(4), "the same conversation goes on: context note, two turns, the new message");
 
-    let other = agent.set_model("gpt-5").await.expect_err("another provider");
-    assert!(matches!(other, ControlError::ProviderChange { provider: Provider::OpenAi, .. }), "{other:?}");
+    let other = agent.set_model("gpt-5").await.expect_err("a provider with no credential here");
+    assert!(matches!(other, ControlError::Sdk(SdkError::NoProvider { provider: Provider::OpenAi, .. })), "{other:?}");
     assert_eq!(agent.model().as_deref(), Some("claude-haiku-5-5"));
 }
 

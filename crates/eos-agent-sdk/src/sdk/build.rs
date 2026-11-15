@@ -33,8 +33,14 @@ impl SdkBuilder {
             }
             None => (None, None),
         };
-        let router = RoutingClient { anthropic, openai: openai_client.clone().map(|c| c as Arc<dyn ModelClient>) };
-        let has_claude = router.has(Provider::Anthropic);
+        let mut router = RoutingClient::default();
+        if let Some(client) = anthropic {
+            router.add(Provider::Anthropic.id(), client);
+        }
+        if let Some(client) = &openai_client {
+            router.add(Provider::OpenAi.id(), Arc::clone(client) as Arc<dyn ModelClient>);
+        }
+        let has_claude = router.has(&Provider::Anthropic.id());
         let client: Arc<dyn ModelClient> = Arc::new(router);
         let default_model = self
             .model

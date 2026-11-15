@@ -152,6 +152,15 @@ pub(crate) struct ClaudeModels {
 }
 
 impl Services {
+    /// The SDK's own credential for `provider`, which an agent without one
+    /// of its own runs on.
+    pub(crate) fn own_auth(&self, provider: Provider) -> Option<Arc<dyn TokenSource>> {
+        match provider {
+            Provider::Anthropic => self.claude_auth.clone(),
+            Provider::OpenAi => self.openai_auth.clone(),
+        }
+    }
+
     /// The profile for `model` (`None`: its provider has no credential here).
     pub(crate) fn profile(&self, model: &str) -> Option<&ModelProfile> {
         match Provider::of(model) {

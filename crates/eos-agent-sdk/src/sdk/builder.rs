@@ -130,8 +130,7 @@ impl SdkBuilder {
 
     /// OpenAI models on a ChatGPT plan, with this credential (a bearer
     /// token source). Agents and subagents whose model is an OpenAI one
-    /// (`gpt-*`, `o3`, `openai/<slug>`, `gpt`) run there; a conversation never
-    /// changes provider.
+    /// (`gpt-*`, `o3`, `openai/<slug>`, `gpt`) run there.
     pub fn openai(mut self, auth: Arc<dyn TokenSource>) -> Self {
         self.openai_setup().auth = auth;
         self

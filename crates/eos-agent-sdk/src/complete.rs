@@ -189,13 +189,10 @@ fn wire_request(
         }
         None => (None, None),
     };
-    let provider = match profile.provider {
-        Provider::Anthropic => eos_agent_anthropic::PROVIDER,
-        Provider::OpenAi => eos_agent_openai::PROVIDER,
-    };
+    let provider = profile.provider.id();
     Ok(ModelRequest {
         model: model.to_owned(),
-        auth: request.auth.as_ref().map(|auth| RequestAuth { provider, source: Arc::clone(&auth.0) }),
+        auth: request.auth.as_ref().map(|auth| RequestAuth { provider: provider.clone(), source: Arc::clone(&auth.0) }),
         max_tokens: request.max_tokens.unwrap_or_else(|| services.limits(model).0),
         system: SystemPrompt::new(&system).json().clone(),
         tools,

@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use common::{Dirs, all_text, settle};
 use eos_agent_compat::ClaudePaths;
-use eos_agent_core::{Credential, StaticCredential};
+use eos_agent_core::{Credential, StaticCredential, StoredMessage};
 use eos_agent_mock_api::{MockApi, Output, Recorded, Reply};
-use eos_agent_sdk::{AgentOptions, Sdk};
+use eos_agent_sdk::{AgentOptions, ModelChange, Sdk};
+use eos_agent_types::{ContentBlock, Role};
 use serde_json::{Value, json};
 
 fn catalog() -> Value {
@@ -67,6 +68,88 @@ fn function_names(r: &Recorded) -> Vec<String> {
     let body = r.json();
     let tools = body["tools"][0]["tools"].as_array().cloned().unwrap_or_default();
     tools.iter().filter_map(|t| t["name"].as_str().map(str::to_owned)).collect()
+}
+
+/// The content of every assistant message a Messages request carries.
+fn replies(r: &Recorded) -> Vec<Value> {
+    let body = r.json();
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    messages.into_iter().filter(|m| m["role"] == "assistant").map(|m| m["content"].clone()).collect()
+}
+
+#[tokio::test]
+async fn a_conversation_moves_between_providers_and_each_gets_its_own_reasoning_back() {
+    let dirs = Dirs::new("openai-switch");
+    let mock = mock([
+        Reply::thought("Greet.", "CLAUDE-SIG", "Hello from Claude."),
+        Reply::responses(
+            &[Output::reasoning("rs_1", "Carry on.", "ENC"), Output::text("Hello from GPT.")],
+            (900, 0, 20),
+        ),
+        Reply::text("Claude again."),
+        Reply::responses_text("GPT again."),
+    ])
+    .await;
+    let sdk = sdk(&mock, &dirs, true).await;
+    let options = AgentOptions::new(dirs.project()).mcp(false).id("root-1");
+    let (agent, _events) = sdk.spawn(options).await.expect("spawn");
+    agent.send_text("one").await.expect("alive").expect("turn");
+
+    assert!(!agent.set_model_with("gpt", ModelChange::default()).await.expect("onto OpenAI"), "it fits: no summary");
+    assert_eq!(agent.model().as_deref(), Some("gpt-6-sol"));
+    agent.send_text("two").await.expect("alive").expect("turn");
+    agent.set_model("claude-opus-5-5").await.expect("back onto Claude");
+    agent.send_text("three").await.expect("alive").expect("turn");
+    agent.set_model("gpt").await.expect("onto OpenAI again");
+    agent.send_text("four").await.expect("alive").expect("turn");
+
+    let sent = mock.requests();
+    let paths: Vec<&str> = sent.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(paths, ["/v1/messages", "/v1/responses", "/v1/messages", "/v1/responses"]);
+
+    // OpenAI reads what Claude said, without Claude's reasoning.
+    let to_gpt = input_text(&sent[1]);
+    assert!(to_gpt.contains("Hello from Claude.") && to_gpt.contains("one"), "{to_gpt}");
+    assert!(!to_gpt.contains("CLAUDE-SIG") && !to_gpt.contains("Greet."), "{to_gpt}");
+    assert!(instructions(&sent[1]).starts_with("You are Eos, a coding agent running on an OpenAI GPT model."));
+
+    // Claude gets its own reply as it wrote it, and GPT's without GPT's reasoning.
+    let to_claude = replies(&sent[2]);
+    assert_eq!(to_claude.len(), 2);
+    assert_eq!(to_claude[0][0]["type"], "thinking");
+    assert_eq!(to_claude[0][0]["signature"], "CLAUDE-SIG");
+    assert_eq!(to_claude[1].as_array().map(Vec::len), Some(1), "{}", to_claude[1]);
+    assert_eq!(to_claude[1][0]["text"], "Hello from GPT.");
+    assert!(!sent[2].body.windows(5).any(|w| w == b"oai1."), "no OpenAI reasoning reaches Claude");
+
+    // Back on OpenAI, its reasoning of the second turn goes with the conversation again.
+    let items = sent[3].json()["input"].as_array().cloned().unwrap_or_default();
+    let reasoning: Vec<&Value> = items.iter().filter(|i| i["type"] == "reasoning").collect();
+    assert_eq!(reasoning.len(), 1, "{items:?}");
+    assert_eq!(reasoning[0]["id"], "rs_1");
+    assert_eq!(reasoning[0]["encrypted_content"], "ENC");
+    assert!(!input_text(&sent[3]).contains("CLAUDE-SIG"));
+}
+
+#[tokio::test]
+async fn a_conversation_recorded_before_replies_named_their_provider_still_moves() {
+    let dirs = Dirs::new("openai-switch-legacy");
+    let mock = mock([Reply::text("Carrying on.")]).await;
+    let sdk = sdk(&mock, &dirs, true).await;
+    let said = [
+        ContentBlock::Thinking { thinking: "Earlier.".into(), signature: "oai1.rs_9.ENC".into() },
+        ContentBlock::Text { text: "From GPT, long ago.".into(), citations: None },
+    ];
+    let history = vec![StoredMessage::user_text("one"), StoredMessage::new(Role::Assistant, &said).expect("message")];
+    let (agent, _events) =
+        sdk.spawn(AgentOptions::new(dirs.project()).mcp(false).history(history)).await.expect("spawn");
+    agent.send_text("two").await.expect("alive").expect("turn");
+
+    let sent = mock.requests();
+    assert_eq!(sent[0].path, "/v1/messages");
+    let earlier = replies(&sent[0]);
+    assert_eq!(earlier[0].as_array().map(Vec::len), Some(1), "{}", earlier[0]);
+    assert_eq!(earlier[0][0]["text"], "From GPT, long ago.");
 }
 
 #[tokio::test]

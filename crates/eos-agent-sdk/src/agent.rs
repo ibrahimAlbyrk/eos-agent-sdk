@@ -1,7 +1,7 @@
 //! A top-level agent as the host holds it.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use eos_agent_core::SubagentStart;
@@ -31,8 +31,9 @@ pub struct SdkAgent {
     _mcp: Option<Arc<McpToolset>>,
     /// The workflow authoring reference was loaded for "ultracode" once.
     authoring_loaded: AtomicBool,
-    /// The credential the agent's tree runs on.
-    auth: Option<Arc<SessionAuth>>,
+    /// The credential the agent's tree runs on (a model change onto another
+    /// provider puts that provider's in its place).
+    pub(crate) auth: RwLock<Option<Arc<SessionAuth>>>,
 }
 
 impl std::fmt::Debug for SdkAgent {
@@ -73,7 +74,7 @@ impl SdkAgent {
         mcp: Option<Arc<McpToolset>>,
         auth: Option<Arc<SessionAuth>>,
     ) -> Self {
-        Self { handle, services, project, _mcp: mcp, authoring_loaded: AtomicBool::new(false), auth }
+        Self { handle, services, project, _mcp: mcp, authoring_loaded: AtomicBool::new(false), auth: RwLock::new(auth) }
     }
 
     pub fn id(&self) -> &str {
@@ -209,7 +210,7 @@ impl SdkAgent {
             .filter(|t| !t.is_empty())
             .map(|text| ContentBlock::Text { text, citations: None })
             .collect();
-        // A conversation never changes provider: a command's model on
+        // One turn does not change provider: a command's model on
         // another provider is not used (the agent's own model runs it).
         let current = self.services.registry.blueprint(self.handle.id()).map(|b| b.config.model.clone());
         let model = expansion
@@ -269,7 +270,7 @@ impl SdkAgent {
     /// sign-in, or an API key for this agent only), from their next request
     /// on. It must be one for the provider the agent's model runs on.
     pub fn set_auth(&self, source: Arc<dyn TokenSource>) {
-        if let Some(auth) = &self.auth {
+        if let Some(auth) = &*self.auth.read().unwrap_or_else(PoisonError::into_inner) {
             auth.set(source);
         }
     }

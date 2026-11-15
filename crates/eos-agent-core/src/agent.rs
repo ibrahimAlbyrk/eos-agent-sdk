@@ -9,10 +9,10 @@ use futures_util::future::{Either, select};
 use tokio_util::sync::CancellationToken;
 
 use crate::assembler::Assembled;
-use crate::auth::RequestAuth;
+use crate::auth::{ProviderId, RequestAuth};
 use crate::context::{Compaction, ReminderSource, SessionContext};
 use crate::extensions::Extensions;
-use crate::message::{CacheTtl, MessageError, StoredMessage, SystemPrompt};
+use crate::message::{CacheTtl, MessageError, Origin, StoredMessage, SystemPrompt};
 use crate::model::{LiveRequest, ModelClient, ModelError, Thinking};
 use crate::ports::{AgentEvent, Clock, EventSink, PermissionGate, TranscriptStore};
 use crate::retry::RetryPolicy;
@@ -21,6 +21,7 @@ use crate::workspace::Reminders;
 
 mod compact;
 mod deferred;
+mod handoff;
 mod inline;
 mod input;
 mod memory;
@@ -48,6 +49,10 @@ well within the output limit.";
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
     pub model: String,
+    /// The provider `model` runs on, for a host with several: assistant
+    /// messages record it, and a request leaves out the reasoning of
+    /// messages another provider wrote.
+    pub provider: Option<ProviderId>,
     pub max_tokens: u32,
     pub thinking: Option<Thinking>,
     pub effort: Option<String>,
@@ -109,6 +114,7 @@ impl AgentConfig {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
+            provider: None,
             max_tokens: 32_000,
             thinking: Some(Thinking::Adaptive { summarized: true }),
             effort: None,
@@ -471,6 +477,9 @@ impl Agent {
     /// Adds a message to the conversation; `usage` is the response's, for an
     /// assistant message (the transcript keeps it).
     async fn record(&mut self, message: StoredMessage, usage: Option<&Usage>, deps: Deps<'_>) -> Result<(), TurnError> {
+        let origin = self.config.provider.clone().filter(|_| message.role() == Role::Assistant);
+        let message =
+            message.with_origin(origin.map(|provider| Origin { provider, model: self.config.model.as_str().into() }));
         if let Some(store) = deps.store {
             store.append(&self.id, &message, usage).await?;
         }

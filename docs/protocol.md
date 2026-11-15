@@ -71,8 +71,8 @@ Must come first, once per session. Every field is optional.
   `https://api.openai.com/v1`).
 - `model` and `agent.spawn`'s `model` take OpenAI slugs (`gpt-*`, `o3`, …,
   or any slug written `openai/<slug>`) and `gpt` (the account's first listed
-  model) once an `openaiStore` is set. An agent never changes provider: a
-  command's `model:` on another provider is not used for the turn. Its
+  model) once an `openaiStore` is set. A command's `model:` on another
+  provider is not used for the turn (`agent.setModel` moves an agent). Its
   subagents may run on another provider (an agent type's `model:`); one on a
   provider without a credential runs on the parent's model.
   MCP servers' OAuth sign-ins are kept in the same place: the Keychain item of
@@ -240,8 +240,11 @@ conversation with a model-written summary now (`/compact`). Result:
 agent's model, its effort, or both, from its next turn on (after any queued
 turn); they hold until changed again, and subagents started later inherit
 them. `model` takes an id or an alias and gets Claude Code's settings and
-wording for that model, within what the agent was spawned with; a
-conversation never changes provider (-32602). `effort: null` goes back to the
+wording for that model, within what the agent was spawned with. A model on
+another provider moves the conversation there: it is kept as written, each
+provider gets it without the others' reasoning and its own back when the
+agent returns, and one too long for the new model is summarized first (a
+provider without a credential: -32602). `effort: null` goes back to the
 model's default; leaving `effort` out keeps it. A client that spawns the
 agent again with `resume` passes the model itself.
 

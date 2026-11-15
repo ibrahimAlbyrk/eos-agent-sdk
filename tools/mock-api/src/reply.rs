@@ -32,6 +32,21 @@ impl Reply {
         Self::Stream(steps)
     }
 
+    /// A complete turn that thinks (signed `signature`), then answers with `text`.
+    pub fn thought(thinking: &str, signature: &str, text: &str) -> Self {
+        let mut steps = open();
+        let start = ContentBlock::Thinking { thinking: String::new(), signature: String::new() };
+        steps.extend([
+            Step::Event(StreamEvent::ContentBlockStart { index: 0, block: start }),
+            Step::Event(StreamEvent::ContentBlockDelta { index: 0, delta: Delta::Thinking(thinking.into()) }),
+            Step::Event(StreamEvent::ContentBlockDelta { index: 0, delta: Delta::Signature(signature.into()) }),
+            Step::Event(StreamEvent::ContentBlockStop { index: 0 }),
+        ]);
+        steps.extend(block(1, ContentBlock::Text { text: String::new(), citations: None }, Delta::Text(text.into())));
+        steps.extend(close(StopReason::EndTurn));
+        Self::Stream(steps)
+    }
+
     /// A complete turn that calls one tool. `input` is the tool input as JSON.
     pub fn tool_use(id: &str, name: &str, input: &str) -> Self {
         let empty = RawValue::from_string("{}".into()).expect("`{}` is valid JSON");

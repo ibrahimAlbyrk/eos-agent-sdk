@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use eos_agent_types::{ContentBlock, Role};
 use serde::Serialize;
+
+use crate::auth::ProviderId;
 
 /// Prompt-cache lifetime for a cache marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +22,14 @@ impl CacheTtl {
     }
 }
 
+/// Who wrote an assistant message. Its reasoning is opaque to every other
+/// provider, so a request to another one leaves that reasoning out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Origin {
+    pub provider: ProviderId,
+    pub model: Arc<str>,
+}
+
 /// One message kept in its wire form: the exact `{"role":…,"content":[…]}`
 /// bytes the API receives. It is serialized once when created and shared by
 /// every later request (and by forks) without copying.
@@ -30,6 +42,8 @@ pub struct StoredMessage {
     recorded_ms: Option<u64>,
     /// See [`is_meta`](Self::is_meta).
     meta: bool,
+    /// See [`origin`](Self::origin).
+    origin: Option<Origin>,
 }
 
 #[derive(Serialize)]
@@ -54,7 +68,7 @@ impl StoredMessage {
         let json = serde_json::to_vec(&Wire { role, content })?;
         // Kept for the agent's lifetime: drop the serializer's spare capacity
         // (up to half the buffer) instead of keeping it with every message.
-        Ok(Self { role, json: Bytes::from(json.into_boxed_slice()), recorded_ms: None, meta: false })
+        Ok(Self { role, json: Bytes::from(json.into_boxed_slice()), recorded_ms: None, meta: false, origin: None })
     }
 
     pub fn user_text(text: impl Into<String>) -> Self {
@@ -78,7 +92,7 @@ impl StoredMessage {
             && let Ok(raw) = serde_json::from_slice::<Raw<'_>>(&json)
             && raw.content.get().starts_with("[{")
         {
-            return Ok(Self { role: raw.role, json, recorded_ms: None, meta: false });
+            return Ok(Self { role: raw.role, json, recorded_ms: None, meta: false, origin: None });
         }
         #[derive(serde::Deserialize)]
         struct Head {
@@ -135,6 +149,17 @@ impl StoredMessage {
 
     pub fn with_meta(mut self, meta: bool) -> Self {
         self.meta = meta;
+        self
+    }
+
+    /// The provider and model that wrote an assistant message, when known.
+    /// Kept by the transcript store; never part of the bytes the API receives.
+    pub fn origin(&self) -> Option<&Origin> {
+        self.origin.as_ref()
+    }
+
+    pub fn with_origin(mut self, origin: Option<Origin>) -> Self {
+        self.origin = origin;
         self
     }
 

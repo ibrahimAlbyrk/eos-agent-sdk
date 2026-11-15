@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use eos_agent_core::{CacheTtl, SystemPrompt, Tool};
+use eos_agent_core::{CacheTtl, ProviderId, SystemPrompt, Tool};
 
 /// The API a model runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +24,13 @@ impl Provider {
     /// The provider of a model id or alias.
     pub fn of(model: &str) -> Self {
         if eos_agent_openai::is_openai_model(model) { Self::OpenAi } else { Self::Anthropic }
+    }
+
+    pub fn id(self) -> ProviderId {
+        ProviderId::new(match self {
+            Self::Anthropic => eos_agent_anthropic::PROVIDER,
+            Self::OpenAi => eos_agent_openai::PROVIDER,
+        })
     }
 
     pub fn name(self) -> &'static str {

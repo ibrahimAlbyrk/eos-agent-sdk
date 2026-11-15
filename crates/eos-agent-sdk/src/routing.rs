@@ -1,34 +1,32 @@
 //! One [`ModelClient`] over every configured provider, choosing by the
 //! request's model, so the engine and the side tools keep a single client.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use eos_agent_core::{BoxFuture, EventStream, ModelClient, ModelError, ModelRequest};
+use eos_agent_core::{BoxFuture, EventStream, ModelClient, ModelError, ModelRequest, ProviderId};
 
 use crate::profile::Provider;
 
+#[derive(Default)]
 pub(crate) struct RoutingClient {
-    pub(crate) anthropic: Option<Arc<dyn ModelClient>>,
-    pub(crate) openai: Option<Arc<dyn ModelClient>>,
+    clients: HashMap<ProviderId, Arc<dyn ModelClient>>,
 }
 
 impl RoutingClient {
-    pub(crate) fn has(&self, provider: Provider) -> bool {
-        match provider {
-            Provider::Anthropic => self.anthropic.is_some(),
-            Provider::OpenAi => self.openai.is_some(),
-        }
+    pub(crate) fn add(&mut self, provider: ProviderId, client: Arc<dyn ModelClient>) {
+        self.clients.insert(provider, client);
+    }
+
+    pub(crate) fn has(&self, provider: &ProviderId) -> bool {
+        self.clients.contains_key(provider)
     }
 }
 
 impl ModelClient for RoutingClient {
     fn stream<'a>(&'a self, request: &'a ModelRequest) -> BoxFuture<'a, Result<EventStream, ModelError>> {
         let provider = Provider::of(&request.model);
-        let client = match provider {
-            Provider::Anthropic => self.anthropic.as_ref(),
-            Provider::OpenAi => self.openai.as_ref(),
-        };
-        match client {
+        match self.clients.get(&provider.id()) {
             Some(client) => client.stream(request),
             None => {
                 let how = match provider {

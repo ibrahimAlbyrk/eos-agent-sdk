@@ -112,6 +112,9 @@ fn bash_background(id: &str, command: &str) -> Reply {
 /// A reply that writes `text`, then calls Bash in the foreground on
 /// `command` (a turn stopped during the call ends with `text` as its last words).
 fn text_then_bash(text: &str, command: &str) -> Reply {
+    // Each call its own id, as the API gives them.
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let id = format!("toolu_fg{}", CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let usage = Usage { input_tokens: Some(10), output_tokens: Some(1), ..Usage::default() };
     let start = MessageStart {
         id: "msg_mock".into(),
@@ -130,7 +133,7 @@ fn text_then_bash(text: &str, command: &str) -> Reply {
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::ContentBlockStart {
             index: 1,
-            block: ContentBlock::ToolUse { id: "toolu_fg".into(), name: "Bash".into(), input: empty },
+            block: ContentBlock::ToolUse { id, name: "Bash".into(), input: empty },
         },
         StreamEvent::ContentBlockDelta { index: 1, delta: Delta::InputJson(input) },
         StreamEvent::ContentBlockStop { index: 1 },

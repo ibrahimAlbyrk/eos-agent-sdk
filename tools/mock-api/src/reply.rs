@@ -77,6 +77,24 @@ impl Reply {
         }
     }
 
+    /// The same reply with stop reason `reason` (`None`: the stream states none).
+    pub fn stopping(self, reason: Option<StopReason>) -> Self {
+        match self {
+            Self::Stream(steps) => Self::Stream(
+                steps
+                    .into_iter()
+                    .map(|step| match step {
+                        Step::Event(StreamEvent::MessageDelta { stop_sequence, usage, .. }) => {
+                            Step::Event(StreamEvent::MessageDelta { stop_reason: reason.clone(), stop_sequence, usage })
+                        }
+                        other => other,
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
     /// Keeps the first `events` steps, then cuts the connection.
     pub fn dropped_after(self, events: usize) -> Self {
         match self {
@@ -147,6 +165,9 @@ pub(crate) fn stream(steps: Vec<Step>) -> impl Stream<Item = Result<Bytes, std::
 /// which concurrent agents' requests arrive.
 pub fn read_then_answer(file: &str) -> impl Fn(&[u8]) -> Reply + Send + Sync + 'static {
     let input = serde_json::json!({ "file_path": file }).to_string();
+    // Each call its own id, as the API gives them (a request with two calls
+    // of one id is refused).
+    let calls = std::sync::atomic::AtomicU64::new(0);
     move |body| {
         let last = find_last(body, br#"{"role":"assistant""#).map(|at| &body[at..]);
         let called = last.is_some_and(|msg| {
@@ -154,7 +175,12 @@ pub fn read_then_answer(file: &str) -> impl Fn(&[u8]) -> Reply + Send + Sync + '
             let end = msg[1..].windows(next.len()).position(|w| w == next).map_or(msg.len(), |i| i + 1);
             find_last(&msg[..end], br#""type":"tool_use""#).is_some()
         });
-        if called { Reply::text("Done.") } else { Reply::tool_use("toolu_read", "Read", &input) }
+        if called {
+            Reply::text("Done.")
+        } else {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Reply::tool_use(&format!("toolu_read_{n}"), "Read", &input)
+        }
     }
 }
 

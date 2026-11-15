@@ -5,12 +5,16 @@
 //! A test queues [`Reply`]s; each request takes the next one. Replies can be
 //! normal streams, HTTP errors (429/529 with headers), slow streams, or streams
 //! that break mid-way, so every retry and recovery path is reproducible.
+//! A `/v1/messages` request whose tool calls and results are not paired is
+//! refused with the API's 400 (see [`pairing_violation`]).
 //! For load tests, [`MockApi::responder`] answers every request from its
 //! body instead, and records nothing.
 
+mod pairing;
 mod reply;
 mod responses;
 
+pub use pairing::violation as pairing_violation;
 pub use reply::{Reply, Step, read_then_answer};
 pub use responses::Output;
 
@@ -145,6 +149,17 @@ async fn models(State(shared): State<Arc<Shared>>) -> Response {
 }
 
 async fn messages(State(shared): State<Arc<Shared>>, uri: Uri, headers: HeaderMap, body: Bytes) -> Response {
+    // Refused as the API refuses it, before a scripted reply is taken.
+    let refused = (uri.path() == "/v1/messages").then(|| pairing::violation(&body)).flatten();
+    if let Some(message) = refused {
+        if shared.responder.is_none() {
+            lock(&shared.requests).push(Recorded { path: uri.path().to_owned(), headers, body });
+        }
+        let mut res = (StatusCode::BAD_REQUEST, pairing::refusal(&message)).into_response();
+        res.headers_mut().insert("content-type", axum::http::HeaderValue::from_static("application/json"));
+        res.headers_mut().insert("x-should-retry", axum::http::HeaderValue::from_static("false"));
+        return res;
+    }
     let reply = match &shared.responder {
         Some(respond) => respond(&body),
         None => {

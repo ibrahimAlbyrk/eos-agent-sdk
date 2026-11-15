@@ -12,8 +12,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use eos_agent_artifacts::{
-    Armed, ArtifactWatcher, ComposeRequest, Composed, FrameClient, FrameConfig, Probe, WatchConfig, WatchNotifier,
-    tools_watched, viewer_url,
+    Armed, ArtifactAuth, ArtifactWatcher, ComposeRequest, Composed, FrameClient, FrameConfig, Probe, WatchConfig,
+    WatchNotifier, tools_watched, viewer_url,
 };
 use eos_agent_core::{
     BoxFuture, CancellationToken, Credential, Extensions, StaticCredential, Tool, ToolContext, Workspace,
@@ -27,6 +27,8 @@ const SLUG: &str = "0f8e2a9c-1b3d-4e5f-8a7b-6c5d4e3f2a1b";
 #[derive(Clone)]
 struct Server {
     boots: Arc<AtomicUsize>,
+    /// The `Authorization` of each boot.
+    bearers: Arc<Mutex<Vec<String>>>,
     renewals: Arc<AtomicUsize>,
     /// Boots say the token may be renewed.
     renewable: bool,
@@ -55,6 +57,7 @@ impl Server {
     fn new(refuse_sockets: bool) -> Self {
         Self {
             boots: Arc::default(),
+            bearers: Arc::default(),
             renewals: Arc::default(),
             renewable: false,
             sockets: Arc::default(),
@@ -97,8 +100,10 @@ impl Server {
     }
 }
 
-async fn boot(State(s): State<Server>, Path(slug): Path<String>) -> Response {
+async fn boot(State(s): State<Server>, Path(slug): Path<String>, headers: HeaderMap) -> Response {
     s.boots.fetch_add(1, Ordering::SeqCst);
+    let bearer = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or_default();
+    s.bearers.lock().expect("bearers").push(bearer.to_owned());
     // Boots come one at a time: no other boot races this check.
     if s.unavailable_boots.load(Ordering::SeqCst) > 0 {
         s.unavailable_boots.fetch_sub(1, Ordering::SeqCst);
@@ -527,9 +532,31 @@ async fn the_comments_tool_manages_watches() {
     until("the socket to close", || server.open.load(Ordering::SeqCst) == 0).await;
 }
 
+/// A watch connects and reads on the sign-in of the agent that holds it.
+#[tokio::test]
+async fn a_watch_is_made_on_its_agents_sign_in() {
+    let (base, server) = Server::new(false).start().await;
+    let notes = Arc::new(Notes::default());
+    let shared = Arc::new(StaticCredential(Credential::Bearer("shared".into())));
+    let (tools, _watcher) =
+        tools_watched(shared, FrameConfig { base_url: base.clone(), ..FrameConfig::default() }, notes, config(&base))
+            .expect("tools");
+    let ext = Extensions::default();
+    ext.insert(ArtifactAuth(Arc::new(StaticCredential(Credential::Bearer("own".into())))));
+    let started = run_with(&tools[1], json!({ "action": "watch", "url": viewer_url(SLUG) }), ext).await;
+    assert!(started.starts_with("Watching "), "{started}");
+    until("connected", || server.open.load(Ordering::SeqCst) == 1).await;
+    let bearers = server.bearers.lock().expect("bearers").clone();
+    assert!(!bearers.is_empty() && bearers.iter().all(|b| b == "Bearer own"), "{bearers:?}");
+}
+
 async fn run(tool: &Arc<dyn Tool>, input: Value) -> String {
+    run_with(tool, input, Extensions::default()).await
+}
+
+async fn run_with(tool: &Arc<dyn Tool>, input: Value, ext: Extensions) -> String {
     let raw = serde_json::value::to_raw_value(&input).expect("raw");
-    let (cancel, ext) = (CancellationToken::new(), Extensions::default());
+    let cancel = CancellationToken::new();
     ext.insert(Workspace::new(std::env::temp_dir(), Vec::new(), std::env::temp_dir()));
     let ctx = ToolContext { agent_id: "a1", tool_use_id: "t1", cancel: &cancel, extensions: &ext, transcript: &[] };
     match tool.call(&raw, ctx).await.content {

@@ -218,14 +218,18 @@ impl SdkBuilder {
 
     /// The artifact tools' own credential (default: the model's). The frame
     /// API takes only a Claude sign-in, so a model billed on an API key can
-    /// still publish through one.
+    /// still publish through one. An agent started with an
+    /// [`ArtifactAuth`](crate::ArtifactAuth) in its
+    /// [`extensions`](crate::AgentOptions::extensions) uses that one instead,
+    /// and so do its subagents.
     pub fn artifact_auth(mut self, auth: Arc<dyn TokenSource>) -> Self {
         self.artifact_auth = Some(auth);
         self
     }
 
     /// Artifact tools on or off (default: on exactly when the artifact
-    /// credential, see [`artifact_auth`](Self::artifact_auth), is a Claude sign-in).
+    /// credential, see [`artifact_auth`](Self::artifact_auth), is a Claude
+    /// sign-in). Turned on with no credential here, they need each agent's own.
     pub fn artifacts(mut self, on: bool) -> Self {
         self.artifacts = Some(on);
         self

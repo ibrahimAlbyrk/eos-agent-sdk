@@ -183,6 +183,10 @@ impl SdkAgent {
             .with_protected(self.services.protected.clone());
         extensions.insert(workspace);
         extensions.insert(eos_agent_artifacts::ArtifactSession(session));
+        let seed = blueprint.as_ref().and_then(|b| b.seed.as_ref());
+        if let Some(auth) = seed.and_then(|seed| seed.get::<eos_agent_artifacts::ArtifactAuth>()) {
+            extensions.insert((*auth).clone());
+        }
         if let Some(policy) = self.project.policy() {
             extensions.insert(eos_agent_tools_shell::AgentSandbox(Arc::clone(policy)));
         }

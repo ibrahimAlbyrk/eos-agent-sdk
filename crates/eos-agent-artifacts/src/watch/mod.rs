@@ -4,7 +4,8 @@
 //! a comment sent to Claude wakes the agent that armed replies.
 //!
 //! One service per process, one live connection per watched artifact,
-//! shared by every agent that watches it. Each connection reconnects with
+//! shared by every agent that watches it and made on the sign-in of the
+//! agent that answers its comments. Each connection reconnects with
 //! backoff and ends on its own once nobody watches; the tables are bounded.
 
 mod ack;
@@ -261,6 +262,8 @@ struct Inner {
     /// state): an automatic edit is published as that agent's tool call
     /// would publish it, so the agent's next publish builds on it.
     states: Mutex<HashMap<String, Weak<ArtifactState>>>,
+    /// The client of each agent that carries its own sign-in.
+    clients: Mutex<HashMap<String, Arc<FrameClient>>>,
     status: Arc<status::StatusSender>,
     reacts: react::Reacts,
     coalescer: coalesce::Coalescer,
@@ -322,6 +325,7 @@ impl ArtifactWatcher {
                 sources,
                 notified,
                 states: Mutex::default(),
+                clients: Mutex::default(),
                 status,
                 reacts: react::Reacts::default(),
                 coalescer: coalesce::Coalescer::default(),
@@ -464,22 +468,32 @@ impl ArtifactWatcher {
         self.inner.notifier.compose(agent, request).await
     }
 
-    /// Ties `agent` to its own record of its artifacts (its extensions).
+    /// Ties `agent` to its own record of its artifacts and to its sign-in
+    /// (its extensions).
     pub(crate) fn attach(&self, agent: &str, extensions: &Extensions) {
         let state = Arc::downgrade(&extensions.get_or_default::<ArtifactState>());
         let mut states = self.inner.states.lock().unwrap_or_else(PoisonError::into_inner);
         if states.get(agent).is_some_and(|s| s.ptr_eq(&state)) {
             return;
         }
+        let mut clients = self.inner.clients.lock().unwrap_or_else(PoisonError::into_inner);
         if states.len() >= 4096 {
             states.retain(|_, s| s.strong_count() > 0);
+            clients.retain(|agent, _| states.contains_key(agent));
         }
         states.insert(agent.to_owned(), state);
+        let signed = self.inner.client.signed_for(extensions);
+        if Arc::ptr_eq(&signed, &self.inner.client) {
+            clients.remove(agent);
+        } else {
+            clients.insert(agent.to_owned(), signed);
+        }
     }
 
     /// Ends every watch of an agent that has ended.
     pub fn forget(&self, agent: &str) {
         self.inner.states.lock().unwrap_or_else(PoisonError::into_inner).remove(agent);
+        self.inner.clients.lock().unwrap_or_else(PoisonError::into_inner).remove(agent);
         let mut watches = self.inner.lock();
         let slugs: Vec<String> = watches
             .iter()
@@ -518,6 +532,17 @@ impl ArtifactWatcher {
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Watch>> {
         self.watches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The client `slug`'s watch works through: the sign-in of the agent
+    /// that answers its comments.
+    fn client_for(&self, slug: &str) -> Arc<FrameClient> {
+        let agent = self.lock().get(slug).and_then(|w| {
+            let answers = w.subscribers.iter().find(|s| s.replies);
+            answers.or_else(|| w.subscribers.iter().max_by_key(|s| s.since)).map(|s| Arc::clone(&s.agent))
+        });
+        let clients = self.clients.lock().unwrap_or_else(PoisonError::into_inner);
+        agent.and_then(|agent| clients.get(&*agent).cloned()).unwrap_or_else(|| Arc::clone(&self.client))
     }
 
     fn source_of(&self, slug: &str) -> Option<PathBuf> {

@@ -11,9 +11,9 @@ use axum::http::HeaderMap;
 use axum::routing::get;
 use common::{Dirs, all_text, mock, tool_names};
 use eos_agent_compat::ClaudePaths;
-use eos_agent_core::{BoxFuture, Credential, ModelError, StaticCredential, TokenSource};
+use eos_agent_core::{BoxFuture, Credential, Extensions, ModelError, StaticCredential, TokenSource};
 use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{AgentOptions, FrameConfig, Sdk, SdkBuilder, WatchConfig};
+use eos_agent_sdk::{AgentOptions, ArtifactAuth, FrameConfig, Sdk, SdkBuilder, WatchConfig};
 use serde_json::json;
 
 /// A frame API that records the `authorization` header of every request.
@@ -79,6 +79,29 @@ async fn api_key_model_publishes_through_the_artifact_sign_in() {
     }
     assert_eq!(*seen.lock().expect("seen"), ["Bearer sign-in"]);
     assert!(all_text(&requests[1]).contains("Mine"));
+}
+
+/// Agents of one process on different sign-ins: each one's artifact calls
+/// go out on its own, and one without any is told to sign in.
+#[tokio::test]
+async fn each_agent_publishes_through_its_own_sign_in() {
+    let dirs = Dirs::new("artifact-auth-per-agent");
+    let (frame, seen) = start_frame().await;
+    let list = || Reply::tool_use("toolu_l", "Artifact", r#"{"action":"list"}"#);
+    let model = mock([list(), Reply::text("a"), list(), Reply::text("b"), list(), Reply::text("c")]).await;
+    let sdk = builder(&model, &dirs, &frame).artifacts(true).build().await.expect("sdk");
+    for own in [Some("first"), Some("second"), None] {
+        let mut options = AgentOptions::new(dirs.project()).mcp(false);
+        if let Some(token) = own {
+            let seed = Extensions::default();
+            seed.insert(ArtifactAuth(bearer(token)));
+            options = options.extensions(seed);
+        }
+        let (agent, _events) = sdk.spawn(options).await.expect("spawn");
+        agent.send_text("list my artifacts").await.expect("alive").expect("turn");
+    }
+    assert_eq!(*seen.lock().expect("seen"), ["Bearer first", "Bearer second"]);
+    assert!(all_text(&model.requests()[5]).contains("needs a Claude sign-in"));
 }
 
 #[tokio::test]

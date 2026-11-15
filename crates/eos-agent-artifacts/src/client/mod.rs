@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use eos_agent_core::{Credential, TokenSource};
+use eos_agent_core::{Credential, Extensions, TokenSource};
 use futures_util::StreamExt;
 use reqwest::header::HeaderMap;
 use reqwest::{Method, StatusCode};
@@ -111,10 +111,21 @@ impl RequestBody {
     }
 }
 
+/// The Claude sign-in an agent's artifact calls and watches go out on, in
+/// its extensions. Without one they use the sign-in the tools were built with.
+#[derive(Clone)]
+pub struct ArtifactAuth(pub Arc<dyn TokenSource>);
+
+impl std::fmt::Debug for ArtifactAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ArtifactAuth(..)")
+    }
+}
+
 pub struct FrameClient {
     http: reqwest::Client,
-    config: FrameConfig,
-    auth: Arc<dyn TokenSource>,
+    config: Arc<FrameConfig>,
+    auth: Option<Arc<dyn TokenSource>>,
 }
 
 impl std::fmt::Debug for FrameClient {
@@ -125,17 +136,39 @@ impl std::fmt::Debug for FrameClient {
 
 impl FrameClient {
     pub fn new(auth: Arc<dyn TokenSource>, config: FrameConfig) -> Result<Self, FrameError> {
+        Self::build(Some(auth), config)
+    }
+
+    /// A client with no sign-in of its own: every call needs the calling
+    /// agent's [`ArtifactAuth`].
+    pub fn unsigned(config: FrameConfig) -> Result<Self, FrameError> {
+        Self::build(None, config)
+    }
+
+    fn build(auth: Option<Arc<dyn TokenSource>>, config: FrameConfig) -> Result<Self, FrameError> {
         let http = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
             .redirect(reqwest::redirect::Policy::none())
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .map_err(|e| FrameError::Local(format!("HTTP client: {e}")))?;
-        Ok(Self { http, config, auth })
+        Ok(Self { http, config: Arc::new(config), auth })
+    }
+
+    /// This client on the sign-in `extensions` carry (the same connections);
+    /// itself when they carry none.
+    pub(crate) fn signed_for(self: &Arc<Self>, extensions: &Extensions) -> Arc<Self> {
+        match extensions.get::<ArtifactAuth>() {
+            Some(auth) => {
+                Arc::new(Self { http: self.http.clone(), config: Arc::clone(&self.config), auth: Some(auth.0.clone()) })
+            }
+            None => Arc::clone(self),
+        }
     }
 
     async fn bearer(&self) -> Result<(Credential, String), FrameError> {
-        match self.auth.credential().await {
+        let Some(auth) = &self.auth else { return Err(FrameError::NeedsSignIn) };
+        match auth.credential().await {
             Ok(Credential::Bearer(token)) => {
                 let cred = Credential::Bearer(token.clone());
                 Ok((cred, token))
@@ -188,7 +221,11 @@ impl FrameClient {
                 RequestBody::Stream { content_type, make } => req.header("content-type", content_type).body(make()),
             };
             let res = req.send().await.map_err(|e| FrameError::Network(e.to_string()))?;
-            if res.status() == StatusCode::UNAUTHORIZED && !renewed && self.auth.refused(&cred).await {
+            let refused = res.status() == StatusCode::UNAUTHORIZED && !renewed;
+            if refused
+                && let Some(auth) = &self.auth
+                && auth.refused(&cred).await
+            {
                 renewed = true;
                 (cred, token) = self.bearer().await?;
                 continue;

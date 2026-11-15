@@ -115,7 +115,7 @@ impl ArtifactTool {
 
     async fn run(&self, input: &RawValue, ctx: ToolContext<'_>) -> Result<String, String> {
         let input: Input = serde_json::from_str(input.get()).map_err(|e| format!("invalid input: {e}"))?;
-        let c = &self.client;
+        let c = &self.client.signed_for(ctx.extensions);
         let w = self.watcher.as_ref();
         let t = Target { targets: self.targets.as_deref(), pins: &self.pins, surface: &self.surface, ctx: &ctx };
         match input.action.as_deref().unwrap_or("publish") {

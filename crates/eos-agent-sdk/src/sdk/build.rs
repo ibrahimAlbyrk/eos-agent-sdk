@@ -283,7 +283,8 @@ impl SdkBuilder {
 
     /// The artifact tools' credential and whether they are on. A separate
     /// artifact credential that cannot be read leaves them off unless they
-    /// were turned on: the model's credential still works.
+    /// were turned on: the model's credential still works. Turned on without
+    /// any credential, they work for agents that bring their own.
     async fn artifact_credential(
         &mut self,
         claude: Option<&Arc<dyn TokenSource>>,
@@ -291,9 +292,9 @@ impl SdkBuilder {
         let own = self.artifact_auth.take();
         let auth = own.clone().or_else(|| claude.cloned());
         let on = match (self.artifacts, own, &auth) {
-            // The frame API takes only a Claude credential.
-            (_, _, None) => false,
             (Some(on), _, _) => on,
+            // The frame API takes only a Claude credential.
+            (None, _, None) => false,
             (None, None, Some(auth)) => matches!(auth.credential().await?, Credential::Bearer(_)),
             (None, Some(own), _) => matches!(own.credential().await, Ok(Credential::Bearer(_))),
         };
@@ -319,7 +320,7 @@ impl SdkBuilder {
         tools.push(Arc::new(TaskList::new(tasks.clone()).deferred()));
         tools.push(Arc::new(AskUserQuestion::new(Arc::clone(&self.prompter))));
         let mut kit = None;
-        if let Some(artifact_auth) = artifact_auth.filter(|_| artifacts) {
+        if artifacts {
             let notes = Arc::new(notes);
             let (frame, watch) = self.artifact_api.clone();
             // Claude Code's `<tmp>/bundled-skills/<version>/<random>/<skill>`: one folder per process.
@@ -328,7 +329,7 @@ impl SdkBuilder {
                 .join(uuid::Uuid::new_v4().simple().to_string())
                 .join("artifact-capabilities");
             let artifact_kit = eos_agent_artifacts::kit(
-                Arc::clone(artifact_auth),
+                artifact_auth.cloned(),
                 frame,
                 notes,
                 watch,

@@ -62,7 +62,7 @@ pub use complete::{CompleteError, CompleteRequest, Completion};
 pub use control::{ControlError, ModelChange, StopTaskError, StoppedTask};
 pub use decorate::{Deferred, SpillOver, result_limit};
 pub use eos_agent_agents::SpawnLimits;
-pub use eos_agent_artifacts::{ArtifactOpener, FrameConfig, OpenReason, OpenRequest, WatchConfig};
+pub use eos_agent_artifacts::{ArtifactAuth, ArtifactOpener, FrameConfig, OpenReason, OpenRequest, WatchConfig};
 pub use eos_agent_core::{TaskEvent, TaskEventKind, TaskUsage};
 pub use eos_agent_mcp::{
     AuthPrompter, AuthRequest, BrowserOpener, McpConfig, McpCredentials, McpServerConfig, McpServerState,

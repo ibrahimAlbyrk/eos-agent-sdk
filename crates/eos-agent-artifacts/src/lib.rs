@@ -2,7 +2,9 @@
 //! `ArtifactData`) over claude.ai's frame API.
 //!
 //! The tools share one [`FrameClient`], which takes the Claude sign-in's
-//! OAuth bearer from an injected [`TokenSource`]. Local paths in tool input
+//! OAuth bearer from an injected [`TokenSource`]: the calling agent's
+//! [`ArtifactAuth`] when its extensions carry one, else the one the tools
+//! were built with. Local paths in tool input
 //! resolve through the calling agent's [`Workspace`](eos_agent_core::Workspace)
 //! and never leave its roots; uploads stream from disk.
 //!
@@ -73,7 +75,7 @@ use eos_agent_core::{TokenSource, Tool};
 
 pub use artifact::ArtifactTool;
 pub use capabilities::CapabilitiesGuide;
-pub use client::{DEFAULT_BASE_URL, DEFAULT_CONTENT_HOST, FrameClient, FrameConfig, FrameError};
+pub use client::{ArtifactAuth, DEFAULT_BASE_URL, DEFAULT_CONTENT_HOST, FrameClient, FrameConfig, FrameError};
 pub use comments::ArtifactCommentsTool;
 pub use data::ArtifactDataTool;
 pub use ids::{short_id, slug_from_url, viewer_url};
@@ -116,7 +118,7 @@ pub fn tools_watched(
     notifier: Arc<dyn WatchNotifier>,
     watch: WatchConfig,
 ) -> Result<(Vec<Arc<dyn Tool>>, ArtifactWatcher), FrameError> {
-    let kit = kit(auth, config, notifier, watch, std::env::temp_dir().join("artifact-capabilities"), None)?;
+    let kit = kit(Some(auth), config, notifier, watch, std::env::temp_dir().join("artifact-capabilities"), None)?;
     Ok((kit.tools, kit.watcher))
 }
 
@@ -138,16 +140,20 @@ impl std::fmt::Debug for ArtifactKit {
 /// The watched tools (see [`tools_watched`]) and the `artifact-capabilities`
 /// skill's composer, which writes the contract's type definitions under
 /// `skill_dir`. With `opener`, artifacts open for the person as
-/// [`ArtifactOpener`] describes.
+/// [`ArtifactOpener`] describes. `auth` is the sign-in of agents that carry
+/// no [`ArtifactAuth`] (`None`: such an agent is told to sign in).
 pub fn kit(
-    auth: Arc<dyn TokenSource>,
+    auth: Option<Arc<dyn TokenSource>>,
     config: FrameConfig,
     notifier: Arc<dyn WatchNotifier>,
     watch: WatchConfig,
     skill_dir: PathBuf,
     opener: Option<Arc<dyn ArtifactOpener>>,
 ) -> Result<ArtifactKit, FrameError> {
-    let client = Arc::new(FrameClient::new(auth, config)?);
+    let client = Arc::new(match auth {
+        Some(auth) => FrameClient::new(auth, config)?,
+        None => FrameClient::unsigned(config)?,
+    });
     let watcher = ArtifactWatcher::new(Arc::clone(&client), notifier, watch);
     let capabilities = CapabilitiesGuide::new(Arc::clone(&client), skill_dir);
     let surface = Arc::new(surface::Surface::new(opener));

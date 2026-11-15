@@ -107,7 +107,17 @@ impl CapabilitiesGuide {
     /// whose session targets an artifact pinned to a contract, Claude Code's
     /// guidance for that contract.
     pub async fn render_for(&self, call: Option<(&Extensions, &str)>) -> String {
-        let session = call.map(|(extensions, agent)| session_of(extensions, agent));
+        let Some((extensions, agent)) = call else { return self.render_as(None).await };
+        // The agent's own sign-in reads its artifact's contract.
+        let signed = Self {
+            client: self.client.signed_for(extensions),
+            dir: self.dir.clone(),
+            targets: Arc::clone(&self.targets),
+        };
+        signed.render_as(Some(session_of(extensions, agent))).await
+    }
+
+    async fn render_as(&self, session: Option<String>) -> String {
         let pin = match &session {
             Some(session) => self.pin(session).await,
             None => None,

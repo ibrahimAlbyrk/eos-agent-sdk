@@ -89,7 +89,7 @@ impl ArtifactDataTool {
     async fn run(&self, raw: &RawValue, ctx: ToolContext<'_>) -> Result<String, String> {
         let input: Input = serde_json::from_str(raw.get()).map_err(|e| format!("invalid input: {e}"))?;
         let slug = slug_of(input.url.as_deref(), "url")?;
-        let c = &self.client;
+        let c = &self.client.signed_for(ctx.extensions);
         if input.action == "profiles" {
             let ids =
                 input.ids.as_deref().filter(|i| !i.is_empty() && i.len() <= 64).ok_or("`ids` takes 1 to 64 ids")?;

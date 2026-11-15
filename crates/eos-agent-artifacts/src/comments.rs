@@ -64,7 +64,7 @@ impl ArtifactCommentsTool {
             return self.watch(&input, &ctx);
         }
         let slug = slug_of(input.url.as_deref(), "url")?;
-        let c = &self.client;
+        let c = &self.client.signed_for(ctx.extensions);
         match input.action.as_str() {
             "read" => {
                 let body = c.comments(&slug).await.map_err(|e| explain("Reading the comments", e))?;

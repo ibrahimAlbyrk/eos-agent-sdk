@@ -76,7 +76,7 @@ pub(super) enum Posted {
 
 impl Inner {
     fn status(&self, summon: &Summon, status: Status) {
-        self.status.send(&self.client, summon, status);
+        self.status.send(&self.client_for(&summon.slug), summon, status);
     }
 
     /// Claude Code's `Ce`: the session went into plan mode while the thread
@@ -209,7 +209,8 @@ impl Inner {
         let ack = ack_id.as_deref();
 
         let reply = if edits {
-            let page = tokio::time::timeout(source::READ_TIMEOUT, source::read(&self.client, slug, None)).await;
+            let page =
+                tokio::time::timeout(source::READ_TIMEOUT, source::read(&self.client_for(slug), slug, None)).await;
             let page = page.ok().flatten();
             if self.plan_paused(agent, &summon) {
                 return out;
@@ -448,7 +449,7 @@ impl Inner {
         };
         self.reacts.with(slug, |r| r.answered(&thread.id, Instant::now(), true));
         let ids = [f.ack, id.as_deref()];
-        let resolved = self.client.comment_resolve(slug, &thread.id, &version).await.is_ok();
+        let resolved = self.client_for(slug).comment_resolve(slug, &thread.id, &version).await.is_ok();
         vec![if resolved {
             Reaction::Gathered(Family::AutoEdited, notices::auto_edited(url, &thread.id, &ids))
         } else {
@@ -496,7 +497,7 @@ impl Inner {
             meta.insert("baseVersion".into(), json!(draft.ver));
             meta.insert("auto_edit_attribution".into(), json!({ "thread_id": thread, "comment_id": trigger }));
             let body = PublishBody { meta, content: Some(page), files: Vec::new() };
-            let (status, answer) = self.client.deploy(body).await.map_err(|_| "transient")?;
+            let (status, answer) = self.client_for(slug).deploy(body).await.map_err(|_| "transient")?;
             let why = || error_text(answer.to_string().as_bytes());
             match status {
                 200..=299 => {
@@ -532,7 +533,8 @@ impl Inner {
             Some(page) => Some(page),
             None if thread.anchor.file_degraded => None,
             None => {
-                let read = source::read(&self.client, slug, thread.anchor.file.as_deref());
+                let client = self.client_for(slug);
+                let read = source::read(&client, slug, thread.anchor.file.as_deref());
                 tokio::time::timeout(source::READ_TIMEOUT, read).await.ok().flatten()
             }
         };
@@ -615,7 +617,7 @@ impl Inner {
             return Posted::Refused;
         }
         let continues = post_as.continues.as_deref();
-        match self.client.comment_post(slug, &thread.id, text, post_as.answers_summon, continues).await {
+        match self.client_for(slug).comment_post(slug, &thread.id, text, post_as.answers_summon, continues).await {
             Ok(answer) => Posted::Yes(comment_id(&answer)),
             Err(_) => Posted::Failed,
         }

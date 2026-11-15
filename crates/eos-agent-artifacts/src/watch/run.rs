@@ -272,7 +272,7 @@ async fn token(inner: &Arc<Inner>, slug: &str, line: &mut Line) -> Result<Token,
     }
     let mut boot = None;
     if line.renewable {
-        match inner.client.renew_watch_token(slug).await {
+        match inner.client_for(slug).renew_watch_token(slug).await {
             Ok(b) if b.ver.is_some() && b.subscription_token.is_some() => {
                 boot = Some(b);
                 line.renewable = true;
@@ -283,7 +283,7 @@ async fn token(inner: &Arc<Inner>, slug: &str, line: &mut Line) -> Result<Token,
     let started = Instant::now();
     let boot = match boot {
         Some(b) => b,
-        None => match inner.client.watch_boot(slug).await {
+        None => match inner.client_for(slug).watch_boot(slug).await {
             Ok(Some(b)) => {
                 line.renewable = b.watch_token_renew_enabled == Some(true);
                 if let (Some(title), Some(w)) = (&b.title, inner.lock().get_mut(slug)) {

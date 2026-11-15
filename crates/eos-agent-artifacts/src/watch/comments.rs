@@ -19,7 +19,7 @@ impl Inner {
     /// artifact's comments gets it handed over or answered (Claude Code's
     /// auto-replies), and is told.
     pub(super) async fn comments(self: &Arc<Self>, slug: &str) {
-        let Ok(body) = self.client.comments(slug).await else { return };
+        let Ok(body) = self.client_for(slug).comments(slug).await else { return };
         let threads = thread::threads(&body);
         let viewer = viewer_of(&body);
         let newest = threads

@@ -6,7 +6,7 @@ mod common;
 use std::sync::Arc;
 
 use common::{Agent, Mock, Reply, Tokens, frame_config, source};
-use eos_agent_artifacts::{ArtifactSession, WatchConfig, WatchNotifier, kit, viewer_url};
+use eos_agent_artifacts::{ArtifactAuth, ArtifactSession, WatchConfig, WatchNotifier, kit, viewer_url};
 use eos_agent_core::BoxFuture;
 use serde_json::json;
 
@@ -43,9 +43,15 @@ async fn the_skill_follows_the_target_artifacts_pinned_contract() {
         mock.on("GET", &source(slug, "v1", ""), |_| Reply::content("<p>live</p>", "text/html"));
     }
     let dir = std::env::temp_dir().join(format!("eos-pins-{}", std::process::id()));
-    let kit =
-        kit(Tokens::new("tok", None), frame_config(&mock), Arc::new(Quiet), WatchConfig::default(), dir.clone(), None)
-            .expect("kit");
+    let kit = kit(
+        Some(Tokens::new("tok", None)),
+        frame_config(&mock),
+        Arc::new(Quiet),
+        WatchConfig::default(),
+        dir.clone(),
+        None,
+    )
+    .expect("kit");
     let artifact = &kit.tools[0];
     let agent = Agent::new();
     agent.ext().insert(ArtifactSession("session-1".into()));
@@ -95,4 +101,32 @@ async fn the_skill_follows_the_target_artifacts_pinned_contract() {
     other.ext().insert(ArtifactSession("session-2".into()));
     assert!(!kit.capabilities.render_for(Some((other.ext(), "b1"))).await.contains("pinned"));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Each agent's calls go out on the sign-in its extensions carry; an agent
+/// with none uses the one the tools were built with, or is told to sign in.
+#[tokio::test]
+async fn an_agent_calls_on_its_own_sign_in() {
+    let mock = Mock::start().await;
+    mock.on("GET", "/api/frame/frames?limit=25", |_| Reply::json(200, json!({ "frames": [] })));
+    let dir = std::env::temp_dir().join(format!("eos-own-sign-in-{}", std::process::id()));
+    let build = |auth| kit(auth, frame_config(&mock), Arc::new(Quiet), WatchConfig::default(), dir.clone(), None);
+    let shared = build(Some(Tokens::new("shared", None))).expect("kit");
+    let unsigned = build(None).expect("kit");
+    let bearers = || -> Vec<String> {
+        mock.find("GET", "/api/frame/frames").iter().map(|r| r.header("authorization").to_owned()).collect()
+    };
+
+    let own = Agent::new();
+    own.ext().insert(ArtifactAuth(Tokens::new("own", None)));
+    let plain = Agent::new();
+    for (kit, agent) in [(&shared, &own), (&shared, &plain), (&unsigned, &own)] {
+        let (err, text) = agent.call(&kit.tools[0], json!({ "action": "list" })).await;
+        assert!(!err, "{text}");
+    }
+    assert_eq!(bearers(), ["Bearer own", "Bearer shared", "Bearer own"]);
+
+    let (err, text) = plain.call(&unsigned.tools[0], json!({ "action": "list" })).await;
+    assert!(err && text.contains("needs a Claude sign-in"), "{text}");
+    assert_eq!(bearers().len(), 3, "nothing is sent without a sign-in");
 }

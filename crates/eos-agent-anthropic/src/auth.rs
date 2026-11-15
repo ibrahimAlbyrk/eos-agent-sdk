@@ -39,6 +39,10 @@ const LOCK_NAME: &str = ".oauth_refresh.lock";
 const LOCK_STALE: Duration = Duration::from_secs(60);
 const LOCK_WAIT: Duration = Duration::from_secs(45);
 const LOCK_POLL: Duration = Duration::from_millis(250);
+/// A renewal runs under the lock every agent on the sign-in waits for, so it
+/// may never hang: past this it fails and the next request tries again.
+const RENEWAL_TIMEOUT: Duration = Duration::from_secs(30);
+const RENEWAL_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A Claude sign-in shared with Claude Code (and Eos): the same secret item,
 /// the same refresh lock. Refresh tokens are single-use, so renewals across
@@ -88,13 +92,20 @@ impl ClaudeLogin {
             secrets,
             lock_dir: lock_parent.join(LOCK_NAME),
             token_url: TOKEN_URL.into(),
-            http: reqwest::Client::new(),
+            http: renewal_client(RENEWAL_TIMEOUT),
             cached: Mutex::new(None),
         }
     }
 
     pub fn with_token_url(mut self, url: impl Into<String>) -> Self {
         self.token_url = url.into();
+        self
+    }
+
+    /// How long one renewal (or sign-in exchange) may take before it fails
+    /// (default 30 s).
+    pub fn with_renewal_timeout(mut self, timeout: Duration) -> Self {
+        self.http = renewal_client(timeout);
         self
     }
 
@@ -191,6 +202,14 @@ impl TokenSource for ClaudeLogin {
             }
         })
     }
+}
+
+fn renewal_client(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(RENEWAL_CONNECT_TIMEOUT.min(timeout))
+        .timeout(timeout)
+        .build()
+        .unwrap_or_default()
 }
 
 fn home() -> PathBuf {

@@ -214,3 +214,52 @@ async fn expired_claude_sign_in_is_renewed_under_the_lock() {
     assert!(!dir.join(".oauth_refresh.lock").exists(), "lock released");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn a_renewal_that_never_answers_fails_in_time_and_frees_the_sign_in() {
+    use axum::routing::post;
+    let dir = std::env::temp_dir().join(format!("eos-agent-auth-slow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let creds = dir.join("creds.json");
+    let doc = serde_json::json!({"claudeAiOauth": {"accessToken": "a1", "refreshToken": "r1", "expiresAt": 1000}});
+    std::fs::write(&creds, doc.to_string()).expect("write");
+
+    let hits = Arc::new(AtomicU32::new(0));
+    let counted = hits.clone();
+    let app = axum::Router::new().route(
+        "/token",
+        post(move || {
+            let hits = counted.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                "{}"
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}/token", listener.local_addr().expect("addr"));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let login = Arc::new(
+        ClaudeLogin::new(Arc::new(FileSecrets::new(&creds)), dir.clone())
+            .with_token_url(url)
+            .with_renewal_timeout(std::time::Duration::from_millis(200)),
+    );
+    let asks: Vec<_> = (0..3)
+        .map(|_| {
+            let login = login.clone();
+            tokio::spawn(async move { login.credential().await })
+        })
+        .collect();
+    let all = futures_util::future::join_all(asks);
+    let answers = tokio::time::timeout(std::time::Duration::from_secs(5), all).await.expect("no agent waits forever");
+    for answer in answers {
+        let error = answer.expect("join").expect_err("renewal timed out");
+        assert!(matches!(error, ModelError::Transient(_)), "{error:?}");
+    }
+    // Renewals stay one at a time: each waiter tried after the previous one gave up.
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    assert!(!dir.join(".oauth_refresh.lock").exists(), "lock released");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -25,6 +25,10 @@ const LOCK: &str = ".oauth_refresh.lock";
 const LOCK_STALE: Duration = Duration::from_secs(60);
 const LOCK_WAIT: Duration = Duration::from_secs(45);
 const LOCK_POLL: Duration = Duration::from_millis(250);
+/// A renewal runs under the lock every agent on the sign-in waits for, so it
+/// may never hang: past this it fails and the next request tries again.
+const RENEWAL_TIMEOUT: Duration = Duration::from_secs(30);
+const RENEWAL_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Renew this long before the access token expires.
 const REFRESH_MARGIN_MS: u64 = 5 * 60 * 1000;
 /// The scope that lets a token spend the ChatGPT plan.
@@ -173,7 +177,11 @@ impl ChatGptLogin {
             secrets: FileSecrets::new(dir.join(RECORD)),
             dir,
             config,
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .connect_timeout(RENEWAL_CONNECT_TIMEOUT)
+                .timeout(RENEWAL_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
             cached: Mutex::new(None),
         }
     }

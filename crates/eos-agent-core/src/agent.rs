@@ -24,6 +24,7 @@ mod deferred;
 mod inline;
 mod input;
 mod memory;
+mod pairing;
 mod request;
 mod tools;
 
@@ -194,6 +195,9 @@ pub struct Agent {
     /// Their declarations, kept for when their source goes away (the
     /// conversation still names them).
     kept: BTreeMap<String, Bytes>,
+    /// Calls of the response being answered whose input was cut off: they
+    /// get an error result instead of running.
+    incomplete_calls: Vec<String>,
 }
 
 enum Streamed {
@@ -216,6 +220,7 @@ impl Agent {
             announced: deferred::Announced::default(),
             loaded: BTreeSet::new(),
             kept: BTreeMap::new(),
+            incomplete_calls: Vec::new(),
         }
     }
 
@@ -309,19 +314,41 @@ impl Agent {
     /// Carries on a turn that stopped before the model answered the
     /// conversation's last user message (the request failed: a plan limit, a
     /// sign-in that ran out): the model is asked again, with no new input,
-    /// as Claude Code re-runs an interrupted turn on resume. `None` when the
-    /// conversation does not end with a user message (the host's seed is
-    /// none: no turn ran on it).
+    /// as Claude Code re-runs an interrupted turn on resume. A turn cut off
+    /// while its tools ran (the app quit) goes on the same way, once its
+    /// calls are answered as cut off. `None` when the conversation ends
+    /// otherwise (the host's seed is none: no turn ran on it).
     pub async fn resume_turn(
         &mut self,
         deps: Deps<'_>,
         cancel: &CancellationToken,
     ) -> Result<Option<TurnOutcome>, TurnError> {
         let last = self.transcript.iter().rev().find(|m| m.role() != Role::System);
-        if last.is_none_or(|m| m.role() != Role::User || m.is_meta()) {
+        let cut_in_tools = !pairing::unanswered_calls(&self.transcript).is_empty();
+        if !cut_in_tools && last.is_none_or(|m| m.role() != Role::User || m.is_meta()) {
             return Ok(None);
         }
         self.run_requests(deps, cancel).await.map(Some)
+    }
+
+    /// Results, as cut off, for the calls the conversation's last model
+    /// message left unanswered (by what follows it, or by `input` about to
+    /// join it): a turn that ended there (an older engine finished a turn on
+    /// a response whose stop reason was not `tool_use`) or was cut off while
+    /// its tools ran (the app quit, the turn's task was dropped). The host
+    /// hears each call end; the caller records them ahead of anything else,
+    /// so the transcript says what became of each call.
+    async fn cut_off_results(&self, input: &[ContentBlock], deps: Deps<'_>) -> Vec<ContentBlock> {
+        let answered = |id: &str| {
+            input.iter().any(|b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == id))
+        };
+        let mut results = Vec::new();
+        for id in pairing::unanswered_calls(&self.transcript).into_iter().filter(|id| !answered(id)) {
+            let output = Arc::new(crate::tool::ToolOutput::error(pairing::UNANSWERED));
+            deps.events.emit(AgentEvent::ToolResult { id: id.clone(), output }).await;
+            results.push(pairing::unanswered(&id));
+        }
+        results
     }
 
     /// The turn's model requests and tool calls, from the conversation as it stands.
@@ -329,6 +356,10 @@ impl Agent {
         let mut continuations = 0;
         let mut compacted_for_overflow = false;
         let mut turn_count: u32 = 1;
+        let cut_off = self.cut_off_results(&[], deps).await;
+        if !cut_off.is_empty() {
+            self.push(StoredMessage::new(Role::User, &cut_off)?, deps).await?;
+        }
         loop {
             if let Some(fresh) = self.config.tool_source.as_ref().and_then(|s| s.update(&self.toolbox)) {
                 self.toolbox = fresh;
@@ -378,27 +409,45 @@ impl Agent {
                 self.record(message, Some(&assembled.usage), deps).await?;
             }
 
-            match stop {
-                StopReason::ToolUse => {
-                    let (results, interrupted, ends_turn) = self.run_tools(&assembled.content, deps, cancel).await;
-                    if !results.is_empty() {
-                        self.push(StoredMessage::new(Role::User, &results)?, deps).await?;
-                    }
-                    if interrupted {
-                        return self.interrupted(INTERRUPTED_TOOLS, deps).await;
-                    }
-                    if ends_turn {
-                        let ended = AgentEvent::TurnEnded { stop_reason: StopReason::EndTurn, stated: true };
-                        deps.events.emit(ended).await;
-                        return Ok(TurnOutcome::Finished(StopReason::EndTurn));
-                    }
-                    turn_count += 1;
-                    if self.config.max_turns.is_some_and(|max| turn_count > max) {
-                        let stop = StopReason::Other(MAX_TURNS.to_owned());
-                        deps.events.emit(AgentEvent::TurnEnded { stop_reason: stop.clone(), stated: true }).await;
-                        return Ok(TurnOutcome::Finished(stop));
-                    }
+            // The response's calls are answered whatever its stop reason
+            // (`end_turn`, `max_tokens`, none at all), as their presence and
+            // not the stop reason asks for a follow-up: a call left without
+            // its result makes every later request of the conversation invalid.
+            let calls_tools = assembled.content.iter().any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+            if calls_tools {
+                // A response cut off at the output limit counts against the
+                // continuations even when its calls are answered.
+                let cut_off = stop == StopReason::MaxTokens;
+                if cut_off {
+                    continuations += 1;
                 }
+                self.incomplete_calls = assembled.incomplete_calls;
+                let (results, interrupted, ends_turn) = self.run_tools(&assembled.content, deps, cancel).await;
+                self.incomplete_calls.clear();
+                if !results.is_empty() {
+                    self.push(StoredMessage::new(Role::User, &results)?, deps).await?;
+                }
+                if interrupted {
+                    return self.interrupted(INTERRUPTED_TOOLS, deps).await;
+                }
+                if ends_turn {
+                    let ended = AgentEvent::TurnEnded { stop_reason: StopReason::EndTurn, stated: true };
+                    deps.events.emit(ended).await;
+                    return Ok(TurnOutcome::Finished(StopReason::EndTurn));
+                }
+                if cut_off && continuations > self.config.max_continuations {
+                    deps.events.emit(AgentEvent::TurnEnded { stop_reason: stop.clone(), stated }).await;
+                    return Ok(TurnOutcome::Finished(stop));
+                }
+                turn_count += 1;
+                if self.config.max_turns.is_some_and(|max| turn_count > max) {
+                    let stop = StopReason::Other(MAX_TURNS.to_owned());
+                    deps.events.emit(AgentEvent::TurnEnded { stop_reason: stop.clone(), stated: true }).await;
+                    return Ok(TurnOutcome::Finished(stop));
+                }
+                continue;
+            }
+            match stop {
                 StopReason::PauseTurn | StopReason::Compaction => {}
                 StopReason::MaxTokens if continuations < self.config.max_continuations => {
                     continuations += 1;

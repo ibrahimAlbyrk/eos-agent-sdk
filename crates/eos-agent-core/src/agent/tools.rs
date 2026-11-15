@@ -99,6 +99,9 @@ impl Agent {
         if cancel.is_cancelled() {
             return ToolOutput::error(TOOL_INTERRUPTED);
         }
+        if self.incomplete_calls.iter().any(|c| c == id) {
+            return ToolOutput::error(INCOMPLETE_CALL);
+        }
         let Some(tool) = self.toolbox.get(name) else {
             return ToolOutput::error(format!("Error: No such tool available: {name}"));
         };
@@ -163,3 +166,7 @@ pub(super) fn without_unanswered_calls(content: Vec<ContentBlock>) -> Vec<Conten
         })
         .collect()
 }
+
+/// The result of a call whose input was cut off (at the output limit, or a
+/// stream that ended inside it).
+const INCOMPLETE_CALL: &str = "<tool_use_error>The call's input was cut off before it was complete, so the call was not run. Make it again; if its input is long, split the work into smaller calls.</tool_use_error>";

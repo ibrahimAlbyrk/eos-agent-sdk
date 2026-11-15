@@ -77,6 +77,8 @@ impl Agent {
                         return Err(ModelError::ContextWindowExceeded("nothing left to drop".into()).into());
                     };
                     request.messages.drain(..from - dropped);
+                    // Counted in the transcript, cut in the request: what was cut must not split a call from its result.
+                    super::pairing::repair_wire(&mut request.messages);
                     dropped = from;
                     trims += 1;
                 }

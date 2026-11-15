@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{Dirs, agent, all_text, mock, sdk, settle, system_text, tool_names};
+use common::{Dirs, agent, all_text, exists, mock, sdk, settle, system_text, tool_names};
 use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{Credential, StaticCredential};
 use eos_agent_mock_api::Reply;
@@ -465,4 +465,41 @@ async fn a_name_belongs_to_the_agent_given_it_last() {
     // got is a race with the caller's; who reports is not.
     let resumed = texts.iter().any(|t| t.contains("Second\" finished"));
     assert!(resumed, "SendMessage by name reached the second");
+}
+
+/// A subagent's response calls Write but says `end_turn`; its parent then
+/// asks it where the file is. The call runs, so the message that resumes the
+/// subagent never lands between the call and its result (the API would
+/// refuse that conversation, and the subagent would fail).
+#[tokio::test]
+async fn a_subagent_call_that_ends_its_response_still_runs_before_a_message_resumes_it() {
+    use eos_agent_types::StopReason;
+    let dirs = Dirs::new("sub-stop-call");
+    let file = dirs.project().join("KARNE.md");
+    let write = serde_json::json!({"file_path": file, "content": "the plan"}).to_string();
+    let start = r#"{"description":"Plan","prompt":"Write the plan","name":"planner","run_in_background":false}"#;
+    let mock = mock([
+        Reply::tool_use("toolu_p1", "Agent", start),
+        Reply::tool_use("toolu_w", "Write", &write).stopping(Some(StopReason::EndTurn)),
+        Reply::text("written"),
+        Reply::tool_use("toolu_p2", "SendMessage", r#"{"to":"planner","message":"Where is the file?"}"#),
+        Reply::text("fine"),
+        Reply::text("fine"),
+        Reply::text("fine"),
+    ])
+    .await;
+    let sdk = sdk(&mock, &dirs).await;
+    let (agent, _events) = agent(&sdk, &dirs).await;
+    agent.send_text("plan it").await.expect("alive").expect("turn");
+    settle(&agent).await;
+
+    assert!(exists(&file), "the call ran");
+    for (i, request) in mock.requests().iter().enumerate() {
+        assert_eq!(eos_agent_mock_api::pairing_violation(&request.body), None, "request {i}");
+    }
+    let resumed = mock
+        .requests()
+        .iter()
+        .any(|r| all_text(r).contains("Where is the file?") && r.body.windows(7).any(|w| w == b"toolu_w"));
+    assert!(resumed, "the subagent goes on with its own conversation, the call answered");
 }

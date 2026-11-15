@@ -751,6 +751,7 @@ name = "eos-agent-core"
 version = "0.0.1"
 dependencies = [
  "bytes",
+ "eos-agent-mock-api",
  "eos-agent-types",
  "fastrand",
  "futures-util",

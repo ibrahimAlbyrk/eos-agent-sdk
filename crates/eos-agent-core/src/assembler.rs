@@ -26,9 +26,22 @@ fn emit(first: Option<AgentEvent>, second: Option<AgentEvent>) -> Emitted {
 
 #[derive(Debug)]
 enum Partial {
-    Text { text: String, citations: Vec<Box<RawValue>> },
-    Thinking { thinking: String, signature: String },
-    ToolUse { id: String, name: String, json: String, server: bool },
+    Text {
+        text: String,
+        citations: Vec<Box<RawValue>>,
+    },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    /// `closed`: its `content_block_stop` came.
+    ToolUse {
+        id: String,
+        name: String,
+        json: String,
+        server: bool,
+        closed: bool,
+    },
     Whole(ContentBlock),
 }
 
@@ -40,6 +53,9 @@ pub struct Assembled {
     pub usage: Usage,
     /// Did the stream reach `message_stop`?
     pub complete: bool,
+    /// Tool calls whose input was cut off (it never closed, or is not a
+    /// whole JSON object): they are answered without being run.
+    pub incomplete_calls: Vec<String>,
 }
 
 impl Assembler {
@@ -65,10 +81,10 @@ impl Assembler {
                     ContentBlock::Text { text, .. } => Partial::Text { text, citations: Vec::new() },
                     ContentBlock::Thinking { thinking, signature } => Partial::Thinking { thinking, signature },
                     ContentBlock::ToolUse { id, name, .. } => {
-                        Partial::ToolUse { id, name, json: String::new(), server: false }
+                        Partial::ToolUse { id, name, json: String::new(), server: false, closed: false }
                     }
                     ContentBlock::ServerToolUse { id, name, .. } => {
-                        Partial::ToolUse { id, name, json: String::new(), server: true }
+                        Partial::ToolUse { id, name, json: String::new(), server: true, closed: false }
                     }
                     other => Partial::Whole(other),
                 };
@@ -81,12 +97,15 @@ impl Assembler {
             }
             StreamEvent::ContentBlockDelta { index, delta } => emit(self.delta(index as usize, delta), None),
             StreamEvent::ContentBlockStop { index } => {
-                let call = match self.blocks.get(index as usize) {
-                    Some(Some(Partial::ToolUse { id, name, json, server: false })) => Some(AgentEvent::ToolUse {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: Arc::from(tool_input(json)),
-                    }),
+                let call = match self.blocks.get_mut(index as usize) {
+                    Some(Some(Partial::ToolUse { id, name, json, server, closed })) => {
+                        *closed = true;
+                        (!*server).then(|| AgentEvent::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: Arc::from(tool_input(json)),
+                        })
+                    }
                     _ => None,
                 };
                 emit(Some(AgentEvent::BlockStop { index }), call)
@@ -137,8 +156,25 @@ impl Assembler {
     }
 
     pub fn finish(self) -> Assembled {
+        let incomplete_calls = self
+            .blocks
+            .iter()
+            .flatten()
+            .filter_map(|b| match b {
+                Partial::ToolUse { id, json, server: false, closed, .. } if !closed || !whole_input(json) => {
+                    Some(id.clone())
+                }
+                _ => None,
+            })
+            .collect();
         let content = self.blocks.into_iter().flatten().map(Partial::into_block).collect();
-        Assembled { content, stop_reason: self.stop_reason, usage: self.usage, complete: self.stopped }
+        Assembled {
+            content,
+            stop_reason: self.stop_reason,
+            usage: self.usage,
+            complete: self.stopped,
+            incomplete_calls,
+        }
     }
 }
 
@@ -153,15 +189,20 @@ impl Partial {
                 ContentBlock::Text { text, citations }
             }
             Self::Thinking { thinking, signature } => ContentBlock::Thinking { thinking, signature },
-            Self::ToolUse { id, name, json, server: false } => {
+            Self::ToolUse { id, name, json, server: false, .. } => {
                 ContentBlock::ToolUse { id, name, input: tool_input(&json) }
             }
-            Self::ToolUse { id, name, json, server: true } => {
+            Self::ToolUse { id, name, json, server: true, .. } => {
                 ContentBlock::ServerToolUse { id, name, input: tool_input(&json) }
             }
             Self::Whole(block) => block,
         }
     }
+}
+
+/// Is the streamed input a whole JSON object (or nothing: a call without input)?
+fn whole_input(json: &str) -> bool {
+    json.trim().is_empty() || serde_json::from_str::<&RawValue>(json).is_ok_and(|v| v.get().starts_with('{'))
 }
 
 /// The streamed input JSON; `{}` when empty or malformed, so the call can still

@@ -15,6 +15,13 @@ impl Agent {
     ///
     /// [`push_session_notes`]: Self::push_session_notes
     pub(super) async fn push_input(&mut self, input: Vec<ContentBlock>, deps: Deps<'_>) -> Result<(), TurnError> {
+        // Input never goes between a call and its result: results for calls
+        // left unanswered come first in the same message.
+        let mut input = input;
+        let cut_off = self.cut_off_results(&input, deps).await;
+        if !cut_off.is_empty() {
+            input.splice(0..0, cut_off);
+        }
         // Kept, so a conversation rewound to its start opens the same way.
         let prefix = self.session.as_ref().filter(|_| self.unopened()).map(|s| s.user_prefix.clone());
         let message = match prefix {

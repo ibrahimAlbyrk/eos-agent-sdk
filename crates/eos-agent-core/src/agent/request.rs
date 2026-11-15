@@ -46,6 +46,16 @@ impl Agent {
             }
             None => history,
         };
+        // Last, on exactly what goes out: whatever the transcript holds, every
+        // call has its result in the next message and every result its call.
+        let paired;
+        let history = match super::pairing::repaired(history) {
+            Some(fixed) => {
+                paired = fixed;
+                &paired
+            }
+            None => history,
+        };
         let mut messages: Vec<Bytes> = history.iter().map(|m| m.json().clone()).collect();
         if let (Some(ttl), Some(last), Some(slot)) = (self.config.cache_ttl, history.last(), messages.last_mut()) {
             *slot = last.with_cache_marker(ttl);

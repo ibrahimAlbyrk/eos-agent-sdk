@@ -46,6 +46,29 @@ pub struct StoredMessage {
     origin: Option<Origin>,
 }
 
+/// What one image is counted as in a token estimate. The API bills an image
+/// by its pixels, a few thousand tokens at most, never by its base64 length.
+const IMAGE_TOKENS: u64 = 2_000;
+
+/// The base64 images in a message's JSON, also inside tool results: how
+/// many, and the bytes of their data.
+fn image_data(json: &[u8]) -> (u64, usize) {
+    // Quotes inside a text are escaped, so this only matches a source's own key.
+    const KEY: &[u8] = br#""media_type":"image/"#;
+    const DATA: &[u8] = br#"","data":""#;
+    let (mut images, mut bytes, mut rest) = (0, 0, json);
+    while let Some(at) = rest.windows(KEY.len()).position(|w| w == KEY) {
+        rest = &rest[at + KEY.len()..];
+        let Some(subtype) = rest.iter().position(|&b| b == b'"') else { break };
+        let Some(data) = rest[subtype..].strip_prefix(DATA) else { continue };
+        let len = data.iter().position(|&b| b == b'"').unwrap_or(data.len());
+        images += 1;
+        bytes += len;
+        rest = &data[len..];
+    }
+    (images, bytes)
+}
+
 #[derive(Serialize)]
 struct Wire<'a> {
     role: Role,
@@ -167,9 +190,11 @@ impl StoredMessage {
         &self.json
     }
 
-    /// Rough token count (bytes / 4), for budgeting between API reports.
+    /// Rough token count, for budgeting between API reports: bytes / 4, an
+    /// image at a flat cost whatever its size in bytes.
     pub fn estimated_tokens(&self) -> u64 {
-        self.json.len() as u64 / 4
+        let (images, image_bytes) = image_data(&self.json);
+        (self.json.len() - image_bytes) as u64 / 4 + images * IMAGE_TOKENS
     }
 
     pub fn blocks(&self) -> Result<Vec<ContentBlock>, serde_json::Error> {
@@ -231,6 +256,23 @@ impl SystemPrompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_is_estimated_by_a_flat_cost_not_its_bytes() {
+        let data = "A".repeat(400_000);
+        let image =
+            format!(r#"{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{data}"}}}}"#);
+        let result = format!(
+            r#"{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t","content":[{image},{image}]}}]}}"#
+        );
+        let with_images = StoredMessage::from_wire(Bytes::from(result)).expect("a message");
+        let estimate = with_images.estimated_tokens();
+        assert!((2 * IMAGE_TOKENS..2 * IMAGE_TOKENS + 100).contains(&estimate), "{estimate}");
+
+        // A text that only talks about images is counted as the text it is.
+        let text = StoredMessage::user_text(format!(r#""media_type":"image/png","data":"{data}""#));
+        assert!(text.estimated_tokens() >= 100_000);
+    }
 
     #[test]
     fn cache_marker_lands_on_last_block() {

@@ -3,7 +3,7 @@
 use eos_agent_core::{ModelError, ModelRequest};
 use serde_json::{Map, Value, json};
 
-use super::{Compat, MaxTokens};
+use super::{Compat, Effort, MaxTokens};
 
 /// What a thinking block's signature opens with when it carries what a
 /// server sent beside a tool call and wants back (`extra_content`).
@@ -44,8 +44,18 @@ pub(super) fn build(request: &ModelRequest, model: &str, compat: &Compat) -> Res
         MaxTokens::MaxCompletionTokens => body.insert("max_completion_tokens".into(), request.max_tokens.into()),
         MaxTokens::Omit => None,
     };
-    if let Some(effort) = request.effort.as_deref().filter(|_| compat.effort) {
-        body.insert("reasoning_effort".into(), effort.into());
+    if let Some(level) = request.effort.as_deref() {
+        match compat.effort(model) {
+            Effort::None => {}
+            Effort::Levels(_) => {
+                body.insert("reasoning_effort".into(), level.into());
+            }
+            Effort::Budgets(budgets) => {
+                if let Some((_, Some(budget))) = budgets.iter().find(|(l, _)| l == level) {
+                    body.insert("thinking_budget".into(), (*budget).into());
+                }
+            }
+        }
     }
     let tools = match &request.tools {
         Some(tools) => functions(&serde_json::from_slice::<Value>(tools).map_err(invalid)?),
@@ -194,6 +204,7 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
+    use crate::chat::ModelEffort;
 
     fn request(messages: &[Value], tools: Option<Value>) -> ModelRequest {
         ModelRequest {
@@ -230,7 +241,8 @@ mod tests {
             {"name": "Read", "description": "Reads.", "input_schema": {"type": "object"}},
             {"type": "web_search_20250305", "name": "web_search"},
         ]);
-        let compat = Compat { replay_reasoning: true, effort: true, ..Compat::default() };
+        let efforts = vec![ModelEffort::new("m", Effort::Levels(vec!["low".into(), "high".into()]))];
+        let compat = Compat { replay_reasoning: true, efforts, ..Compat::default() };
         let body: Value = serde_json::from_slice(&build(&request(&messages, Some(tools)), "m", &compat).expect("body"))
             .expect("json");
         assert_eq!(body["model"], "m");
@@ -256,5 +268,25 @@ mod tests {
         assert!(body.get("stream_options").is_none() && body.get("tools").is_none());
         assert!(body["messages"][1]["content"].as_str().is_some_and(|c| c.contains("[image omitted")));
         assert!(body["messages"][2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn an_effort_goes_as_the_model_takes_it() {
+        let budgets = Effort::Budgets(vec![("low".into(), Some(4_096)), ("high".into(), None)]);
+        let efforts =
+            vec![ModelEffort::new("lev", Effort::Levels(vec!["high".into()])), ModelEffort::new("bud", budgets)];
+        let compat = Compat { efforts, ..Compat::default() };
+        let body = |model: &str, effort: &str| -> Value {
+            let mut req = request(&[], None);
+            req.effort = Some(effort.into());
+            serde_json::from_slice(&build(&req, model, &compat).expect("body")).expect("json")
+        };
+        assert_eq!(body("lev-1", "high")["reasoning_effort"], "high");
+        assert!(body("lev-1", "high").get("thinking_budget").is_none());
+        assert_eq!(body("bud-1", "low")["thinking_budget"], 4_096);
+        assert!(body("bud-1", "low").get("reasoning_effort").is_none());
+        assert!(body("bud-1", "high").get("thinking_budget").is_none(), "no budget: the model's own most");
+        let other = body("other", "high");
+        assert!(other.get("reasoning_effort").is_none() && other.get("thinking_budget").is_none());
     }
 }

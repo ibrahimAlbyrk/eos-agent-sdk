@@ -1,6 +1,7 @@
 //! Agents on a provider the host configured (a server that speaks the Chat
 //! Completions API), against the mock API: a tool turn, a conversation that
-//! moves there from Claude and back, the provider's model list.
+//! moves there from Claude and back, the provider's model list, efforts,
+//! and a provider on OpenAI's Responses API with an API key.
 
 mod common;
 
@@ -8,8 +9,8 @@ use std::sync::Arc;
 
 use common::{Dirs, builder, mock};
 use eos_agent_core::{Credential, StaticCredential};
-use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{AgentOptions, ChatCompat, ProviderConfig, Sdk, SdkError};
+use eos_agent_mock_api::{MockApi, Output, Reply};
+use eos_agent_sdk::{AgentOptions, ChatCompat, Effort, ModelEffort, ProviderConfig, Sdk, SdkError, Wire};
 use serde_json::{Value, json};
 
 fn provider(mock: &MockApi) -> ProviderConfig {
@@ -21,6 +22,7 @@ fn provider(mock: &MockApi) -> ProviderConfig {
         key_header: None,
         headers: vec![("x-title".into(), "Eos".into())],
         compat: ChatCompat { replay_reasoning: true, ..ChatCompat::default() },
+        wire: Wire::Chat,
         context_window: Some(64_000),
         max_tokens: Some(4_000),
     }
@@ -118,4 +120,67 @@ async fn a_providers_models_are_listed_and_a_removed_provider_runs_nothing() {
     assert!(sdk.remove_provider("deep"));
     let refused = sdk.spawn(AgentOptions::new(dirs.project()).model("deep/chat-1").mcp(false)).await;
     assert!(matches!(refused, Err(SdkError::NoProvider { .. })), "{:?}", refused.map(|_| ()));
+}
+
+#[tokio::test]
+async fn an_effort_goes_to_a_provider_as_its_model_takes_it() {
+    let dirs = Dirs::new("provider-effort");
+    let mock = mock([Reply::chat_text("", "one"), Reply::chat_text("", "two"), Reply::chat_text("", "three")]).await;
+    let sdk = builder(&mock, &dirs).model("claude-opus-5-5").build().await.expect("sdk");
+    let mut config = provider(&mock);
+    config.compat.efforts = vec![
+        ModelEffort::new("lev", Effort::Levels(vec!["low".into(), "high".into(), "max".into()])),
+        ModelEffort::new("bud", Effort::Budgets(vec![("low".into(), Some(4_096)), ("high".into(), None)])),
+    ];
+    sdk.set_provider(config).expect("the provider");
+    for (model, effort) in [("deep/lev-1", "medium"), ("deep/bud-1", "low"), ("deep/plain-1", "high")] {
+        let options = AgentOptions::new(dirs.project()).model(model).effort(effort).mcp(false);
+        let (agent, _events) = sdk.spawn(options).await.expect("spawn");
+        agent.send_text("hi").await.expect("alive").expect("turn");
+    }
+
+    let sent: Vec<Value> = mock.requests().iter().map(|r| r.json()).collect();
+    assert_eq!(sent[0]["reasoning_effort"], "low", "a level it lacks goes down to the nearest it has");
+    assert!(sent[0].get("thinking_budget").is_none());
+    assert_eq!(sent[1]["thinking_budget"], 4_096);
+    assert!(sent[1].get("reasoning_effort").is_none());
+    assert!(sent[2].get("reasoning_effort").is_none() && sent[2].get("thinking_budget").is_none(), "{}", sent[2]);
+}
+
+#[tokio::test]
+async fn a_provider_on_the_responses_api_runs_with_its_key() {
+    let dirs = Dirs::new("provider-responses");
+    let mock = mock([Reply::responses(&[Output::text("Hello from the API.")], (10, 0, 5))]).await;
+    mock.set_models(json!({"object": "list", "data": [{"id": "gpt-9"}, {"id": "gpt-9-mini"}]}));
+    let sdk = builder(&mock, &dirs).model("claude-opus-5-5").build().await.expect("sdk");
+    let config = ProviderConfig {
+        id: "oa".into(),
+        wire: Wire::Responses,
+        base_url: format!("{}/v1", mock.base_url()),
+        chat_path: None,
+        auth: Arc::new(StaticCredential(Credential::ApiKey("k-oa".into()))),
+        key_header: None,
+        headers: Vec::new(),
+        compat: ChatCompat {
+            efforts: vec![ModelEffort::new("gpt-", Effort::Levels(vec!["low".into(), "medium".into(), "high".into()]))],
+            ..ChatCompat::default()
+        },
+        context_window: Some(400_000),
+        max_tokens: Some(32_000),
+    };
+    sdk.set_provider(config).expect("the provider");
+    assert_eq!(sdk.provider_models("oa").await.expect("the provider").expect("listed"), ["gpt-9", "gpt-9-mini"]);
+    let options = AgentOptions::new(dirs.project()).model("oa/gpt-9").effort("max").mcp(false);
+    let (agent, _events) = sdk.spawn(options).await.expect("spawn");
+    agent.send_text("hi").await.expect("alive").expect("turn");
+
+    let sent = mock.requests();
+    let turn = sent.iter().find(|r| r.path == "/v1/responses").expect("a Responses request");
+    assert_eq!(turn.headers.get("authorization").and_then(|v| v.to_str().ok()), Some("Bearer k-oa"));
+    let body = turn.json();
+    assert_eq!(body["model"], "gpt-9", "the server gets the model as it names it");
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert_eq!(body["store"], false);
+    let tools = body["tools"].as_array().expect("tools");
+    assert!(tools.iter().any(|t| t["type"] == "function" && t["name"] == "Read"), "plain function tools");
 }

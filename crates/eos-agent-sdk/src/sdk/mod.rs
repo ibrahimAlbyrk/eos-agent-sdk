@@ -111,7 +111,8 @@ impl Sdk {
         Some(self.services.openai.as_ref()?.catalog.ensure().await)
     }
 
-    /// Adds a provider that speaks the Chat Completions API, or replaces
+    /// Adds a provider that speaks the Chat Completions API (or OpenAI's
+    /// Responses API with an API key), or replaces
     /// the one of that name. Its models are named `<id>/<model>`; agents
     /// already on one use the new settings from their next request.
     pub fn set_provider(&self, config: ProviderConfig) -> Result<(), SdkError> {
@@ -127,7 +128,7 @@ impl Sdk {
     /// (`None`: no provider of that name).
     pub async fn provider_models(&self, id: &str) -> Option<Result<Vec<String>, ModelError>> {
         let provider = self.services.others.get(&ProviderId::new(id))?;
-        Some(provider.client.list_models().await)
+        Some(provider.list_models().await)
     }
 
     /// The context window an agent on `model` (an id or alias) gets, in tokens.

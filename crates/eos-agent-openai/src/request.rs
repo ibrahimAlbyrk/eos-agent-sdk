@@ -127,15 +127,17 @@ impl Memo {
 
 /// How the body is shaped beyond what the request says.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Shape {
+pub(crate) struct Shape<'a> {
     pub(crate) tools: ToolPlacement,
+    /// The model as the server names it.
+    pub(crate) model: &'a str,
 }
 
-pub(crate) fn build(req: &ModelRequest, shape: Shape, memo: &Memo) -> Result<Vec<Bytes>, ModelError> {
+pub(crate) fn build(req: &ModelRequest, shape: Shape<'_>, memo: &Memo) -> Result<Vec<Bytes>, ModelError> {
     let size: usize = req.messages.iter().map(Bytes::len).sum();
     let mut out = Out::with_capacity(size, 16 + req.messages.len() / 4);
     out.s("{\"model\":");
-    out.s(&quote(&req.model));
+    out.s(&quote(shape.model));
     let instructions = memo.get_or(&req.system, || instructions(&req.system))?;
     if instructions.len() > 2 {
         out.s(",\"instructions\":");
@@ -676,7 +678,7 @@ mod tests {
     }
 
     fn body(req: &ModelRequest, tools: ToolPlacement) -> Value {
-        let pieces = build(req, Shape { tools }, &Memo::default()).expect("build");
+        let pieces = build(req, Shape { tools, model: &req.model }, &Memo::default()).expect("build");
         serde_json::from_slice(&pieces.concat()).expect("valid json")
     }
 
@@ -738,7 +740,8 @@ mod tests {
     fn large_values_are_shared_not_copied() {
         let big = "y".repeat(4000);
         let req = request(&[json!({"role":"user","content":[{"type":"text","text":big}]})]);
-        let pieces = build(&req, Shape { tools: ToolPlacement::Namespace }, &Memo::default()).expect("build");
+        let pieces =
+            build(&req, Shape { tools: ToolPlacement::Namespace, model: &req.model }, &Memo::default()).expect("build");
         let message = &req.messages[0];
         let inside = |p: &Bytes| {
             let range = message.as_ptr() as usize..message.as_ptr() as usize + message.len();
@@ -781,8 +784,8 @@ mod tests {
     fn shared_values_are_translated_once() {
         let memo = Memo::default();
         let req = request(&[json!({"role":"user","content":[{"type":"text","text":"a"}]})]);
-        let first = build(&req, Shape { tools: ToolPlacement::TopLevel }, &memo).expect("build");
-        let second = build(&req, Shape { tools: ToolPlacement::TopLevel }, &memo).expect("build");
+        let first = build(&req, Shape { tools: ToolPlacement::TopLevel, model: &req.model }, &memo).expect("build");
+        let second = build(&req, Shape { tools: ToolPlacement::TopLevel, model: &req.model }, &memo).expect("build");
         let tools_piece = |pieces: &[Bytes]| pieces.iter().find(|p| p.starts_with(b"[{\"type\":\"function\"")).cloned();
         let (a, b) = (tools_piece(&first).expect("tools"), tools_piece(&second).expect("tools"));
         assert_eq!(a.as_ptr(), b.as_ptr(), "the second request reuses the translation");

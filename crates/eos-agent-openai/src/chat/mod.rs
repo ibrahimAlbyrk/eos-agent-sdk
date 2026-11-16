@@ -29,18 +29,65 @@ pub enum MaxTokens {
     Omit,
 }
 
+/// How a model takes an effort.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Effort {
+    /// It takes none: none is sent.
+    #[default]
+    None,
+    /// `reasoning_effort`, one of these levels.
+    Levels(Vec<String>),
+    /// `thinking_budget`, in tokens, for each level; a level without one
+    /// sends none (the model thinks as long as it may).
+    Budgets(Vec<(String, Option<u32>)>),
+}
+
+impl Effort {
+    /// The levels it takes.
+    pub fn levels(&self) -> Vec<&str> {
+        match self {
+            Self::None => Vec::new(),
+            Self::Levels(levels) => levels.iter().map(String::as_str).collect(),
+            Self::Budgets(budgets) => budgets.iter().map(|(level, _)| level.as_str()).collect(),
+        }
+    }
+}
+
+/// The effort the models whose ids (as the provider names them) open with
+/// `models` take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelEffort {
+    pub models: String,
+    pub effort: Effort,
+}
+
+impl ModelEffort {
+    pub fn new(models: impl Into<String>, effort: Effort) -> Self {
+        Self { models: models.into(), effort }
+    }
+}
+
 /// Where a server differs from the others.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compat {
     pub max_tokens: MaxTokens,
     /// Ask for token usage with the stream (`stream_options.include_usage`).
     pub stream_usage: bool,
-    /// Send the effort as `reasoning_effort`.
-    pub effort: bool,
+    /// How its models take an effort: the first whose `models` a model's id
+    /// opens with; a model none names takes none.
+    pub efforts: Vec<ModelEffort>,
     /// Send a reply's reasoning back with it (`reasoning_content`).
     pub replay_reasoning: bool,
     /// The models read images.
     pub images: bool,
+}
+
+impl Compat {
+    /// How `model` (as the provider names it) takes an effort.
+    pub fn effort(&self, model: &str) -> &Effort {
+        static NONE: Effort = Effort::None;
+        self.efforts.iter().find(|e| model.starts_with(e.models.as_str())).map_or(&NONE, |e| &e.effort)
+    }
 }
 
 impl Default for Compat {
@@ -48,7 +95,7 @@ impl Default for Compat {
         Self {
             max_tokens: MaxTokens::default(),
             stream_usage: true,
-            effort: false,
+            efforts: Vec::new(),
             replay_reasoning: false,
             images: true,
         }

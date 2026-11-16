@@ -220,9 +220,9 @@ impl Services {
 
     pub(crate) fn effort_for(&self, model: &str, wanted: Option<&str>) -> Option<String> {
         if Provider::of(model) == Provider::Other {
-            // The levels every server with an effort takes.
-            let level = |e: &str| if matches!(e, "xhigh" | "max") { "high".to_owned() } else { e.to_owned() };
-            return self.other(model).filter(|p| p.effort).and(wanted).map(level);
+            let provider = self.other(model)?;
+            let name = model.split_once('/').map_or(model, |(_, name)| name);
+            return eos_agent_openai::models::nearest_effort(&provider.effort(name).levels(), wanted?);
         }
         match self.openai_catalog(model) {
             Some(catalog) => catalog.effort(eos_agent_openai::models::slug(model), wanted),

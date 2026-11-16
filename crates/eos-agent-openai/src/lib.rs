@@ -49,6 +49,9 @@ const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// What the provider is called here: the `<provider>/` a model id may
+    /// open with, and what a [`RequestAuth`] for this client is labelled.
+    pub provider: String,
     /// The API root (`…/v1`); requests go to `<base>/responses`.
     pub base_url: String,
     pub user_agent: String,
@@ -64,6 +67,7 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
+            provider: PROVIDER.into(),
             base_url: DEFAULT_BASE_URL.into(),
             user_agent: concat!("eos-agent/", env!("CARGO_PKG_VERSION")).into(),
             idle_timeout: Duration::from_secs(300),
@@ -125,7 +129,12 @@ impl OpenAiClient {
 
     /// The request body `request` becomes, as pieces (for tests and benchmarks).
     pub fn body(&self, request: &ModelRequest) -> Result<Vec<Bytes>, ModelError> {
-        request::build(request, request::Shape { tools: self.config.tools }, &self.memo)
+        let model = request
+            .model
+            .strip_prefix(self.config.provider.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(&request.model);
+        request::build(request, request::Shape { tools: self.config.tools, model }, &self.memo)
     }
 
     /// `GET <base>/models`: the signed-in account's catalog, as sent.
@@ -173,7 +182,7 @@ impl OpenAiClient {
     async fn open(&self, request: &ModelRequest) -> Result<EventStream, ModelError> {
         let body = self.body(request)?;
         let url = format!("{}/responses", self.config.base_url);
-        let auth = RequestAuth::choose(request.auth.as_ref(), PROVIDER, &self.auth);
+        let auth = RequestAuth::choose(request.auth.as_ref(), &self.config.provider, &self.auth);
         let mut cred = auth.credential().await?;
         let mut changes = 0;
         loop {

@@ -91,13 +91,7 @@ impl Catalog {
         let model = self.get(slug);
         let wanted = wanted.or(model.and_then(|m| m.default_effort.as_deref()))?;
         let Some(model) = model.filter(|m| !m.efforts.is_empty()) else { return Some(wanted.to_owned()) };
-        if model.efforts.iter().any(|e| e == wanted) {
-            return Some(wanted.to_owned());
-        }
-        let rank = |e: &str| LEVELS.iter().position(|l| *l == e);
-        let target = rank(wanted).unwrap_or(LEVELS.len());
-        let below = model.efforts.iter().filter(|e| rank(e).is_some_and(|r| r <= target)).max_by_key(|e| rank(e));
-        below.or_else(|| model.efforts.iter().min_by_key(|e| rank(e).unwrap_or(usize::MAX))).cloned()
+        nearest_effort(&model.efforts.iter().map(String::as_str).collect::<Vec<_>>(), wanted)
     }
 
     pub fn load(path: &Path) -> Option<Self> {
@@ -202,6 +196,18 @@ impl ModelCatalog {
         *self.current.lock().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&catalog);
         Some(catalog)
     }
+}
+
+/// `wanted` when `levels` has it, else the nearest level below it, else
+/// the least (`None`: there are no levels).
+pub fn nearest_effort(levels: &[&str], wanted: &str) -> Option<String> {
+    if levels.contains(&wanted) {
+        return Some(wanted.to_owned());
+    }
+    let rank = |e: &str| LEVELS.iter().position(|l| *l == e);
+    let target = rank(wanted).unwrap_or(LEVELS.len());
+    let below = levels.iter().filter(|e| rank(e).is_some_and(|r| r <= target)).max_by_key(|e| rank(e));
+    below.or_else(|| levels.iter().min_by_key(|e| rank(e).unwrap_or(usize::MAX))).map(|e| (*e).to_owned())
 }
 
 #[cfg(test)]

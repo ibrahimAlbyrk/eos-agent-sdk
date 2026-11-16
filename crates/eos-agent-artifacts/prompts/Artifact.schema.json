@@ -62,7 +62,7 @@
     },
     "file_paths": {
       "description": "publish with `asset: true` only: several local image, video, PDF, font, stylesheet or script files in place of `file_path`, up to 25 in one call, all into the artifact that `url` names; one approval covers the call, and the result lists each file's id and url, or why it was not uploaded. A CSV, Markdown, JSON or plain-text file, a symbolic or hard link, and a file outside the working directory each go in a call of their own with `file_path`.",
-      "items": { "maxLength": 1024, "minLength": 1, "pattern": "^[^\\0]*$", "type": "string" },
+      "items": { "maxLength": 1024, "minLength": 1, "pattern": "^[^\\x00]*$", "type": "string" },
       "maxItems": 25,
       "minItems": 1,
       "type": "array"

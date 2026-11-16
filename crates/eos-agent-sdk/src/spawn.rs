@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 use crate::agent::SdkAgent;
 use crate::auth::SessionAuth;
 use crate::context::{ContextFacts, server_notes, session_context};
+use crate::control::AutoCompact;
 use crate::host::HostTool;
 use crate::options::{AgentOptions, SystemPromptOverride};
 use crate::profile::{ModelProfile, Provider};
@@ -53,6 +54,15 @@ impl Asked {
     /// A host tool only the top-level agent may call.
     pub(crate) fn is_main_only(&self, tool: &str) -> bool {
         self.host_tools.iter().any(|t| t.main_agent_only && t.name() == tool)
+    }
+
+    /// What was asked, summarizing on its own as `change` says.
+    pub(crate) fn with_compaction(&self, change: AutoCompact) -> Self {
+        let (auto_compact, compact_at) = match change {
+            AutoCompact::Off => (false, None),
+            AutoCompact::At(tokens) => (true, Some(tokens)),
+        };
+        Self { auto_compact, compact_at, ..self.clone() }
     }
 
     /// Summarizing for an agent with this window and output limit: at `at`,

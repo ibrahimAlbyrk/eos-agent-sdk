@@ -9,7 +9,7 @@ use common::mcp::McpMock;
 use common::{Dirs, all_text, mock, sdk, sdk_with_model, system_text, tool_names};
 use eos_agent_core::{AgentEvent, CompactionText, ModelError, TurnError, TurnOutcome};
 use eos_agent_mock_api::Reply;
-use eos_agent_sdk::{AgentOptions, McpServerConfig, McpServerState, SdkAgent, SystemPromptOverride};
+use eos_agent_sdk::{AgentOptions, AutoCompact, McpServerConfig, McpServerState, SdkAgent, SystemPromptOverride};
 use eos_agent_types::StopReason;
 
 async fn until_connected(agent: &SdkAgent, server: &str) {
@@ -114,6 +114,26 @@ async fn the_host_sets_where_and_in_which_words_a_conversation_is_summarized() {
         after["messages"].as_array().expect("messages").iter().filter_map(|m| m["role"].as_str()).collect();
     assert_eq!(roles, ["user", "system"], "the summary took the conversation's place, the session notes after it");
     assert!(all_text(&requests[2]).contains("HOST SUMMARY: the summary"));
+}
+
+#[tokio::test]
+async fn a_host_turns_summarizing_off_and_on_for_a_live_agent() {
+    let dirs = Dirs::new("opt-live-compact");
+    let replies = [Reply::text("one"), Reply::text("two"), Reply::text("the summary"), Reply::text("three")];
+    let mock = mock(replies).await;
+    let sdk = sdk(&mock, &dirs).await;
+    let options = AgentOptions::new(dirs.project()).mcp(false).compact_at(50_000);
+    let (agent, _events) = sdk.spawn(options).await.expect("spawn");
+    agent.set_auto_compact(AutoCompact::Off).await.expect("alive");
+    agent.send_text("first").await.expect("alive").expect("turn");
+    agent.send_text(long_message()).await.expect("alive").expect("turn");
+    assert_eq!(mock.requests().len(), 2, "over the threshold it was spawned with, and not summarized");
+
+    agent.set_auto_compact(AutoCompact::At(50_000)).await.expect("alive");
+    agent.send_text(long_message()).await.expect("alive").expect("turn");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 4, "the summary, then the turn");
+    assert!(all_text(&requests[3]).contains("the summary"));
 }
 
 #[tokio::test]

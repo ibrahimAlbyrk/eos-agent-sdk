@@ -15,7 +15,7 @@ use crate::options::AgentOptions;
 use crate::profile::Provider;
 use crate::registry::Blueprint;
 use crate::sdk::{Sdk, SdkError};
-use crate::spawn::{Asked, ModelSetup, model_setup};
+use crate::spawn::{ModelSetup, model_setup};
 
 /// Why a live agent could not be changed.
 #[derive(Debug, thiserror::Error)]
@@ -33,19 +33,29 @@ pub enum ControlError {
     Sdk(#[from] SdkError),
 }
 
+/// When an agent summarizes its conversation on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoCompact {
+    /// Never: only when the host calls [`SdkAgent::compact`].
+    Off,
+    /// Once the live context reaches this many tokens, and when a request
+    /// no longer fits the model's window.
+    At(u64),
+}
+
 /// What changes with an agent's model besides the model.
 #[derive(Default)]
 pub struct ModelChange {
     /// The agent's own credential for the new model's provider (`None`: the
     /// one it has when the provider stays, else the SDK's for that provider).
     pub auth: Option<Arc<dyn TokenSource>>,
-    /// Where the conversation is summarized from now on (`None`: as set at spawn).
-    pub compact_at: Option<u64>,
+    /// When the conversation is summarized from now on (`None`: as it is).
+    pub compaction: Option<AutoCompact>,
 }
 
 impl std::fmt::Debug for ModelChange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ModelChange").field("compact_at", &self.compact_at).finish_non_exhaustive()
+        f.debug_struct("ModelChange").field("compaction", &self.compaction).finish_non_exhaustive()
     }
 }
 
@@ -109,8 +119,8 @@ impl SdkAgent {
         let services = &self.services;
         let blueprint = self.blueprint()?;
         let model = services.resolve_model(model);
-        let asked = match change.compact_at {
-            Some(at) => Arc::new(Asked { compact_at: Some(at), ..(*blueprint.asked).clone() }),
+        let asked = match change.compaction {
+            Some(compaction) => Arc::new(blueprint.asked.with_compaction(compaction)),
             None => Arc::clone(&blueprint.asked),
         };
         let effort = blueprint.session_effort.as_deref();
@@ -166,6 +176,20 @@ impl SdkAgent {
         config.effort = self.services.effort_for(&config.model, effort);
         self.handle.reconfigure(AgentUpdate { config: Some(config.clone()), ..AgentUpdate::default() }).await?;
         let changed = Blueprint { config, session_effort: effort.map(str::to_owned), ..(*blueprint).clone() };
+        self.services.registry.set_blueprint(self.handle.id(), Arc::new(changed));
+        Ok(())
+    }
+
+    /// Changes when the agent summarizes its conversation on its own, from
+    /// its next turn on. Holds like [`set_model`](Self::set_model), and
+    /// through a later model change that does not say otherwise.
+    pub async fn set_auto_compact(&self, change: AutoCompact) -> Result<(), Gone> {
+        let blueprint = self.blueprint()?;
+        let asked = Arc::new(blueprint.asked.with_compaction(change));
+        let mut config = blueprint.config.clone();
+        config.compaction = Some(asked.compaction(blueprint.context_window, config.max_tokens, asked.compact_at));
+        self.handle.reconfigure(AgentUpdate { config: Some(config.clone()), ..AgentUpdate::default() }).await?;
+        let changed = Blueprint { config, asked, ..(*blueprint).clone() };
         self.services.registry.set_blueprint(self.handle.id(), Arc::new(changed));
         Ok(())
     }

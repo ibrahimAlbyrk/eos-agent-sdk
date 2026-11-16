@@ -245,6 +245,7 @@ impl Agent {
 
     /// Resumes a conversation from recorded messages.
     pub fn with_history(mut self, history: Vec<StoredMessage>) -> Self {
+        let history: Vec<_> = history.into_iter().map(StoredMessage::fitting_images).collect();
         for message in &history {
             loaded_tools(message, &mut self.loaded);
         }
@@ -478,8 +479,9 @@ impl Agent {
     /// assistant message (the transcript keeps it).
     async fn record(&mut self, message: StoredMessage, usage: Option<&Usage>, deps: Deps<'_>) -> Result<(), TurnError> {
         let origin = self.config.provider.clone().filter(|_| message.role() == Role::Assistant);
-        let message =
-            message.with_origin(origin.map(|provider| Origin { provider, model: self.config.model.as_str().into() }));
+        let message = message
+            .fitting_images()
+            .with_origin(origin.map(|provider| Origin { provider, model: self.config.model.as_str().into() }));
         if let Some(store) = deps.store {
             store.append(&self.id, &message, usage).await?;
         }

@@ -58,6 +58,8 @@ getrandom = "0.3"
 hex = "0.4"
 http = "1"
 http-body = "1"
+# Scaling down images the API would refuse; only the formats it takes.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 libc = "0.2"
 # The workflow script rewriter (parser and visitor only: no regex parser).
 oxc_allocator = "0.157"

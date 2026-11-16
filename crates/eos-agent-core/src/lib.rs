@@ -9,6 +9,7 @@ mod assembler;
 mod auth;
 mod context;
 mod extensions;
+mod images;
 mod message;
 mod model;
 mod modes;

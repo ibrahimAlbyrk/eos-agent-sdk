@@ -17,7 +17,7 @@ impl Agent {
     /// Puts back a history released by [`Agent::release_history`], as read
     /// from the transcript store.
     pub fn restore_history(&mut self, history: Vec<StoredMessage>) {
-        self.transcript = history;
+        self.transcript = history.into_iter().map(StoredMessage::fitting_images).collect();
     }
 
     /// Cuts the conversation back to its first `keep` messages (a rewind):

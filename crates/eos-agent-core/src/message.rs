@@ -190,6 +190,14 @@ impl StoredMessage {
         &self.json
     }
 
+    /// The message with every image scaled down to the size the API accepts.
+    pub(crate) fn fitting_images(mut self) -> Self {
+        if let Some(json) = crate::images::fit(&self.json) {
+            self.json = Bytes::from(json.into_boxed_slice());
+        }
+        self
+    }
+
     /// Rough token count, for budgeting between API reports: bytes / 4, an
     /// image at a flat cost whatever its size in bytes.
     pub fn estimated_tokens(&self) -> u64 {

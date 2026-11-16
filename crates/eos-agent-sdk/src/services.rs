@@ -199,6 +199,14 @@ impl Services {
         models::resolve_model(name)
     }
 
+    /// What a subagent's model may be named, by provider ready here.
+    pub(crate) fn model_names(&self) -> String {
+        let claude = self.claude.as_ref().map(|_| "sonnet, opus, haiku, fable".to_owned());
+        let openai = self.openai.as_ref().map(|_| format!("{} or a ChatGPT model id", eos_agent_openai::models::ALIAS));
+        let others = self.others.ids().into_iter().map(|id| format!("{id}/<model>"));
+        claude.into_iter().chain(openai).chain(others).collect::<Vec<_>>().join("; ")
+    }
+
     /// `max_tokens` and the context window for `model`.
     pub(crate) fn limits(&self, model: &str) -> (u32, u64) {
         if let Some(provider) = self.other(model) {

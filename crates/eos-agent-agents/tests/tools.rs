@@ -200,17 +200,38 @@ async fn agents_nest_only_as_deep_as_allowed() {
     assert!(!call(&deeper, r#"{"description":"d","prompt":"p"}"#, &Extensions::default()).await.is_error);
 }
 
+/// A host that runs other providers' models opens `model` to any name.
+#[tokio::test]
+async fn a_host_may_open_the_model_to_any_name() {
+    let fake = Arc::new(FakeSubagents { reply: Some("ok".into()), ..Default::default() });
+    let open = SpawnLimits { any_model: true, ..SpawnLimits::default() };
+    let tool = AgentTool::new(fake.clone(), definitions()).with_limits(open);
+    let def: serde_json::Value = serde_json::from_slice(tool.spec().json()).expect("json");
+    let model = &def["input_schema"]["properties"]["model"];
+    assert!(model.get("enum").is_none(), "{model}");
+    assert!(model["description"].as_str().expect("text").contains("another provider's model id"));
+    assert!(def["input_schema"]["properties"].get("run_in_background").is_some());
+
+    let input = r#"{"description":"d","prompt":"p","model":"deep/chat-1","run_in_background":false}"#;
+    assert!(!call(&tool, input, &Extensions::default()).await.is_error);
+    let alias = r#"{"description":"d","prompt":"p","run_in_background":false}"#;
+    assert!(!call(&tool, alias, &Extensions::default()).await.is_error);
+    let requests = fake.requests.lock().expect("lock");
+    assert_eq!((requests[0].model.as_deref(), requests[0].model_required), (Some("deep/chat-1"), true));
+    assert_eq!((requests[1].model.as_deref(), requests[1].model_required), (None, false));
+}
+
 #[test]
 fn limits_read_the_environment_as_claude_code_does() {
     let env = |pairs: &'static [(&'static str, &'static str)]| {
         move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| (*v).to_owned())
     };
-    assert_eq!(SpawnLimits::from_env(env(&[])), SpawnLimits { background: true, max_depth: 3 });
+    assert_eq!(SpawnLimits::from_env(env(&[])), SpawnLimits { background: true, max_depth: 3, any_model: false });
     let set = SpawnLimits::from_env(env(&[
         ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", " Yes"),
         ("CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH", " 5 "),
     ]));
-    assert_eq!(set, SpawnLimits { background: false, max_depth: 5 });
+    assert_eq!(set, SpawnLimits { background: false, max_depth: 5, any_model: false });
     for (bg, depth) in [("0", "0"), ("x", "2.5"), ("", "-1"), ("false", "3e2")] {
         let pairs: &'static [(&'static str, &'static str)] = Box::leak(Box::new([
             ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", bg),

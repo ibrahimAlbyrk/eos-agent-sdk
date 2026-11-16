@@ -56,6 +56,14 @@ impl Providers {
         self.0.read().unwrap_or_else(PoisonError::into_inner).get(id).cloned()
     }
 
+    /// The providers' names, in order.
+    pub(crate) fn ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> =
+            self.0.read().unwrap_or_else(PoisonError::into_inner).keys().map(|id| id.as_str().to_owned()).collect();
+        ids.sort();
+        ids
+    }
+
     pub(crate) fn client(&self, id: &ProviderId) -> Option<Arc<dyn ModelClient>> {
         self.get(id).map(|p| Arc::clone(&p.client) as Arc<dyn ModelClient>)
     }

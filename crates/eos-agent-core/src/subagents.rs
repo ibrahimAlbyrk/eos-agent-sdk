@@ -24,6 +24,9 @@ pub struct SubagentRequest {
     /// Agent definition to run (`general-purpose` when `None`).
     pub agent_type: Option<String>,
     pub model: Option<String>,
+    /// `model` must run: a request whose model has no provider ready is
+    /// refused instead of running on the parent's.
+    pub model_required: bool,
     /// `low` … `max`; `None` keeps the definition's or the parent's.
     pub effort: Option<String>,
     /// `worktree` or `remote`, as the call asked; the host decides what it offers.

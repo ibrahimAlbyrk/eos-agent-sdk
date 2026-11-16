@@ -20,7 +20,7 @@ struct Input {
     description: String,
     prompt: String,
     subagent_type: Option<String>,
-    model: Option<Model>,
+    model: Option<String>,
     run_in_background: Option<bool>,
     name: Option<String>,
     /// Worktrees and remote sessions are the host's to offer; only fork's
@@ -34,25 +34,16 @@ struct Input {
     _team_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-enum Model {
-    Sonnet,
-    Opus,
-    Haiku,
-    Fable,
-}
+/// Claude Code's model aliases: all the Agent tool takes unless the host
+/// opens it to other models ([`SpawnLimits::any_model`]).
+const ALIASES: [&str; 4] = ["sonnet", "opus", "haiku", "fable"];
 
-impl Model {
-    fn alias(self) -> &'static str {
-        match self {
-            Self::Sonnet => "sonnet",
-            Self::Opus => "opus",
-            Self::Haiku => "haiku",
-            Self::Fable => "fable",
-        }
-    }
-}
+/// What the schema says of `model` once any model may be named.
+const ANY_MODEL: &str = "Optional model override for this agent: `sonnet`, `opus`, `haiku` or `fable`, or another \
+provider's model id exactly as the session lists it. Takes precedence over the agent definition's model frontmatter \
+and the configured default subagent model. If omitted, uses the agent definition's model, else the default (inherits \
+from the parent unless a default subagent model is configured). Ignored for subagent_type: \"fork\" — forks always \
+inherit the parent model.";
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
@@ -110,11 +101,15 @@ pub struct SpawnLimits {
     /// An agent nested this deep may not start another
     /// (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`).
     pub max_depth: usize,
+    /// The call's `model` may name any model the host runs, not only Claude
+    /// Code's aliases; one that cannot run is refused instead of running on
+    /// the parent's.
+    pub any_model: bool,
 }
 
 impl Default for SpawnLimits {
     fn default() -> Self {
-        Self { background: true, max_depth: DEFAULT_MAX_DEPTH }
+        Self { background: true, max_depth: DEFAULT_MAX_DEPTH, any_model: false }
     }
 }
 
@@ -133,7 +128,7 @@ impl SpawnLimits {
             }
             v.parse::<i64>().ok().filter(|n| *n >= 1).map(|n| usize::try_from(n).unwrap_or(usize::MAX))
         });
-        Self { background: !disabled, max_depth: depth.unwrap_or(DEFAULT_MAX_DEPTH) }
+        Self { background: !disabled, max_depth: depth.unwrap_or(DEFAULT_MAX_DEPTH), any_model: false }
     }
 }
 
@@ -171,33 +166,46 @@ impl AgentTool {
     }
 
     /// Claude Code's limits instead of its defaults. Without background
-    /// agents, its text and schema leave them out.
+    /// agents, its text and schema leave them out; with any model allowed,
+    /// `model` is free text.
     #[must_use]
     pub fn with_limits(mut self, limits: SpawnLimits) -> Self {
         self.limits = limits;
+        if limits.background && !limits.any_model {
+            return self;
+        }
+        let def: serde_json::Value = serde_json::from_slice(self.spec.json()).unwrap_or_default();
+        let mut description = def["description"].as_str().unwrap_or_default().to_owned();
+        let mut schema = def["input_schema"].clone();
         if !limits.background {
-            let def: serde_json::Value = serde_json::from_slice(self.spec.json()).unwrap_or_default();
-            let description = def["description"]
-                .as_str()
-                .unwrap_or_default()
-                .replace(REPORT_BACKGROUND, REPORT_FOREGROUND)
-                .replace(BACKGROUND_DEFAULT, "");
-            let mut schema = def["input_schema"].clone();
+            description = description.replace(REPORT_BACKGROUND, REPORT_FOREGROUND).replace(BACKGROUND_DEFAULT, "");
             if let Some(properties) = schema["properties"].as_object_mut() {
                 properties.remove("run_in_background");
             }
-            let mut spec = ToolSpec::new("Agent", &description, schema);
-            if let Some(hint) = self.spec.search_hint() {
-                spec = spec.with_search_hint(hint);
-            }
-            self.spec = spec;
         }
+        if limits.any_model
+            && let Some(model) = schema["properties"]["model"].as_object_mut()
+        {
+            model.remove("enum");
+            model.insert("description".to_owned(), ANY_MODEL.into());
+        }
+        let mut spec = ToolSpec::new("Agent", &description, schema);
+        if let Some(hint) = self.spec.search_hint() {
+            spec = spec.with_search_hint(hint);
+        }
+        self.spec = spec;
         self
     }
 
     async fn run(&self, input: Input, ctx: ToolContext<'_>) -> ToolOutput {
         if let Some(problem) = input.name.as_deref().and_then(name_problem) {
             return crate::refused(format_args!("InputValidationError: {problem}"));
+        }
+        let model = input.model.filter(|m| !m.trim().is_empty());
+        if let Some(model) = model.as_deref().filter(|m| !self.limits.any_model && !ALIASES.contains(m)) {
+            return crate::refused(format_args!(
+                "InputValidationError: unknown model `{model}`, expected one of `sonnet`, `opus`, `haiku`, `fable`"
+            ));
         }
         let depth = self.subagents.depth(ctx.agent_id);
         if depth >= self.limits.max_depth {
@@ -234,7 +242,8 @@ impl AgentTool {
             description: input.description.split_whitespace().collect::<Vec<_>>().join(" "),
             prompt: input.prompt,
             agent_type: Some(agent_type.map_or(FORK, |d| d.name.as_str()).to_owned()),
-            model: if fork { None } else { input.model.map(|m| m.alias().to_owned()) },
+            model_required: self.limits.any_model && !fork && model.is_some(),
+            model: if fork { None } else { model },
             effort: input.effort.map(|e| e.as_str().to_owned()),
             // The call's isolation, else a worktree its definition asks for.
             isolation: input.isolation.map(|i| i.as_str().to_owned()).or_else(|| {

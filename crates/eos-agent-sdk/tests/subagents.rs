@@ -353,6 +353,29 @@ async fn subagents_nest_only_as_deep_as_allowed() {
     assert!(all_text(&requests[3]).contains("did it myself"));
 }
 
+/// With `model` open to any name, one whose provider is not ready is
+/// refused with the names that run, not run on the parent's model.
+#[tokio::test]
+async fn a_named_model_without_a_provider_is_refused() {
+    let dirs = Dirs::new("sub-any-model");
+    let call = r#"{"description":"Dig","prompt":"Dig","model":"nobody/chat-1","run_in_background":false}"#;
+    let mock = mock([Reply::tool_use("toolu_1", "Agent", call), Reply::text("done")]).await;
+    let open = SpawnLimits { any_model: true, ..SpawnLimits::default() };
+    let sdk = limited_sdk(&mock, &dirs, "mock-model", open).await;
+    let (agent, _events) = agent(&sdk, &dirs).await;
+    agent.send_text("go").await.expect("alive").expect("turn");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 2, "no subagent ran");
+    let back = all_text(&requests[1]);
+    assert!(
+        back.contains(
+            "<tool_use_error>No provider is ready for model \"nobody/chat-1\". Models that run here: sonnet, opus, \
+             haiku, fable. Omit `model` to run on your own.</tool_use_error>"
+        ),
+        "{back}"
+    );
+}
+
 /// `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`: subagents run in the foreground,
 /// and both of Claude Code's Agent texts drop what they say of backgrounds.
 #[tokio::test]

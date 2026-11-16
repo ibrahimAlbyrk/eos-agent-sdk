@@ -53,6 +53,13 @@ pub(super) fn fresh(services: &Services, parent: &Blueprint, request: &SubagentR
     // A model whose provider has no credential here runs on the parent's
     // (a GPT parent asking for `haiku` without a Claude sign-in).
     let wanted_model = services.resolve_model(plan.model);
+    if request.model_required && services.profile(&wanted_model).is_none() {
+        return Err(format!(
+            "No provider is ready for model \"{}\". Models that run here: {}. Omit `model` to run on your own.",
+            plan.model,
+            services.model_names()
+        ));
+    }
     let model = if services.profile(&wanted_model).is_some() { wanted_model } else { parent.config.model.clone() };
     let parent_profile = services.profile(&parent.config.model).ok_or("The calling agent's provider is gone.")?;
     let own = services.profile(&model).ok_or("No provider for the subagent's model.")?;

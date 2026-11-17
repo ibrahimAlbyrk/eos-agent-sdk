@@ -121,8 +121,7 @@ pub(crate) fn substitute(body: &str, args: &str, names: &[String], vars: &Vars<'
     let digits = |at: usize| bytes[at.min(bytes.len())..].iter().take_while(|b| b.is_ascii_digit()).count();
 
     while i < bytes.len() {
-        let rest = &body[i..];
-        if bytes[i] == b'\\' && rest[1..].starts_with('$') && (i == 0 || bytes[i - 1] != b'\\') {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'$') && (i == 0 || bytes[i - 1] != b'\\') {
             let at = i + 2;
             if digits(at) > 0 || body[at..].starts_with("ARGUMENTS") || name_at(at).is_some() {
                 out.push_str(&body[last..i]);
@@ -136,6 +135,7 @@ pub(crate) fn substitute(body: &str, args: &str, names: &[String], vars: &Vars<'
             i += 1;
             continue;
         }
+        let rest = &body[i..];
         let at = i + 1;
         let mut value: Option<String> = None;
         let mut end = at;
@@ -223,6 +223,12 @@ mod tests {
         // Escaped placeholders stay literal and do not count as used.
         assert_eq!(sub(r"cost \$1 and \$ARGUMENTS, \$HOME", "", &[]), r"cost $1 and $ARGUMENTS, \$HOME");
         assert_eq!(sub(r"\$0 $0", "a", &[]), "$0 a");
+    }
+
+    #[test]
+    fn text_outside_ascii_is_kept() {
+        assert_eq!(sub("open — then $0 → ş🙂 \\é", "çay", &[]), "open — then çay → ş🙂 \\é");
+        assert_eq!(sub("ü$ARGUMENTSü", "ö", &[]), "üöü");
     }
 
     #[test]

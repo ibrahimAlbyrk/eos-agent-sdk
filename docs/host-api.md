@@ -113,8 +113,8 @@ NotebookEdit's `notebook_path`, the folder an Artifact `read` with `path` or
 ArtifactData `get`, `list` or `query` (the agent's scratch folder, the
 default, is left out: saving there is the tool's own). Each `WriteTarget`
 has the absolute `path` and `inside`: whether it lands inside the agent's
-working directories (or one of the engine's files it may write, a session's
-workflow scripts), judged by the path as written and by where its symlinks
+working directories (or its own scratch folder, or one of the engine's files
+it may write, a session's workflow scripts), judged by the path as written and by where its symlinks
 lead, so a link inside the roots to a folder outside them is outside.
 `ToolCall::writes_outside()` tells whether any lands outside. A host whose
 modes accept edits without asking should accept only those with
@@ -136,8 +136,8 @@ refused before the gate is asked:
   the data dir, the workflow folder, and whatever the host adds with
   `SdkBuilder::protect_from_writes(path)` (its own data, sign-in stores):
   `<path> is in the agent engine's own files, which tools do not write.`
-  The engine's writable files there (a session's workflow scripts) stay
-  writable.
+  The agent's own scratch folder and the engine's writable files there (a
+  session's workflow scripts) stay writable.
 
 Read-before-write and the other checks of the write tools apply outside the
 working directories as inside them.

@@ -12,6 +12,8 @@ use std::sync::{Mutex, PoisonError, RwLock};
 /// decides each call, except that a tool never writes a protected path
 /// outside the roots, and a confined agent (one isolated in its own
 /// worktree) writes only inside its roots and the engine's writable files.
+/// The agent's own scratch folder counts as inside, as Claude Code lets an
+/// agent write its scratchpad without asking.
 #[derive(Debug)]
 pub struct Workspace {
     cwd: RwLock<PathBuf>,
@@ -72,8 +74,9 @@ impl Workspace {
         self
     }
 
-    /// Paths no tool writes outside the roots, whatever the permission gate
-    /// allows (the engine's own data: transcripts, scratch, sign-in stores).
+    /// Paths no tool writes outside the roots and the agent's own scratch
+    /// folder, whatever the permission gate allows (the engine's own data:
+    /// transcripts, other agents' scratch, sign-in stores).
     #[must_use]
     pub fn with_protected(mut self, protected: Vec<PathBuf>) -> Self {
         self.protected = protected.iter().map(|p| normalize(p)).collect();
@@ -158,16 +161,18 @@ impl Workspace {
         WriteTarget { inside: self.writes_inside(&path), path }
     }
 
-    /// Inside the roots or one of the engine's writable files, both as
-    /// written and where the path's symlinks lead (a link inside the roots
-    /// to a folder outside them is outside). Reads the filesystem.
+    /// Inside the roots, the agent's scratch folder or one of the engine's
+    /// writable files, both as written and where the path's symlinks lead
+    /// (a link inside the roots to a folder outside them is outside). Reads
+    /// the filesystem.
     pub fn writes_inside(&self, path: &Path) -> bool {
         let path = self.resolve(path);
-        if !(self.contains(&path) || in_writable(&path, &self.internal.writable)) {
+        let scratch = normalize(&self.scratch);
+        if !(self.contains(&path) || path.starts_with(&scratch) || in_writable(&path, &self.internal.writable)) {
             return false;
         }
         let real = real_path(&path);
-        let roots: Vec<PathBuf> = self.roots.iter().map(|r| real_path(r)).collect();
+        let roots: Vec<PathBuf> = self.roots.iter().chain([&scratch]).map(|r| real_path(r)).collect();
         let writable: Vec<(PathBuf, String)> =
             self.internal.writable.iter().map(|(dir, end)| (real_path(dir), end.clone())).collect();
         roots.iter().any(|r| real.starts_with(r)) || in_writable(&real, &writable)
@@ -175,7 +180,8 @@ impl Workspace {
 
     /// Why a tool may not write `path`, or `None` when it may (the
     /// permission gate has decided by then). A protected path outside the
-    /// roots is refused, and so is anything outside them for a confined agent.
+    /// roots and the scratch folder is refused, and so is anything outside
+    /// them for a confined agent.
     pub fn write_refusal(&self, path: &Path) -> Option<String> {
         let path = self.resolve(path);
         if self.writes_inside(&path) {
@@ -354,7 +360,8 @@ mod tests {
         assert!(ws.writes_inside(Path::new("/data/s1/workflows/scripts/demo-wf_1.js")));
         assert!(!ws.writes_inside(Path::new("/data/s1/workflows/scripts/demo.txt")));
         assert!(!ws.writes_inside(Path::new("/data/s1/workflows/scripts/../x.js")));
-        assert!(!ws.writes_inside(Path::new("/data/scratch/a1/t.txt")));
+        assert!(ws.writes_inside(Path::new("/data/scratch/a1/t.txt")));
+        assert!(!ws.writes_inside(Path::new("/data/scratch/a2/t.txt")), "another agent's scratch");
         assert!(ws.writes_inside(Path::new("/work/proj/x")));
     }
 
@@ -376,6 +383,7 @@ mod tests {
             Some("/work/other/a.txt is outside this agent's working directories.")
         );
         assert!(confined.may_write(Path::new("/work/proj/src/a.rs")));
+        assert!(confined.may_write(Path::new("/tmp/x/a.txt")), "its own scratch");
     }
 
     #[test]
@@ -387,7 +395,8 @@ mod tests {
                 writable: vec![("/data/engine/s1/workflows/scripts".into(), ".js".into())],
             });
         assert!(ws.write_refusal(Path::new("/data/engine/transcripts/a1.jsonl")).is_some());
-        assert!(ws.write_refusal(Path::new("/data/engine/scratch/a1/t.txt")).is_some());
+        assert!(ws.may_write(Path::new("/data/engine/scratch/a1/t.txt")), "its own scratch");
+        assert!(ws.write_refusal(Path::new("/data/engine/scratch/a2/t.txt")).is_some(), "another agent's scratch");
         assert!(ws.may_write(Path::new("/data/engine/s1/workflows/scripts/demo.js")));
         assert!(ws.may_write(Path::new("/data/engine/proj/src/a.rs")), "the roots win");
         assert!(ws.may_write(Path::new("/data/other/a.txt")));

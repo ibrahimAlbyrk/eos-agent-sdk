@@ -1,7 +1,8 @@
 //! Writes outside the working directories are the permission gate's to
 //! decide, with the absolute path and whether it is inside; an agent
 //! isolated in its own worktree, and the plain subagents it starts, still
-//! write only inside it; the engine's own files stay unwritten.
+//! write only inside it; the engine's own files stay unwritten, except the
+//! agent's own scratch folder.
 
 mod common;
 
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use common::{Dirs, agent, all_text, builder, mock, settle};
 use eos_agent_core::{BoxFuture, Permission, PermissionGate, ToolCall, WriteTarget};
 use eos_agent_mock_api::{MockApi, Reply};
+use eos_agent_sdk::AgentOptions;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -226,6 +228,29 @@ async fn the_engines_own_files_stay_unwritten_whatever_the_gate_says() {
     let after = all_text(&mock.requests()[1]);
     assert!(after.contains("is in the agent engine's own files, which tools do not write."), "{after}");
     assert!(gate.writes_of("Write").is_empty(), "refused before the gate is asked");
+}
+
+#[tokio::test]
+async fn an_agent_writes_its_own_scratch_and_no_other() {
+    let dirs = Dirs::new("write-anywhere-scratch");
+    let own = dirs.root.join("data/scratch/a1/artifacts/page.html");
+    let other = dirs.root.join("data/scratch/a2/page.html");
+    let gate = Arc::new(Gate::default());
+    let mock = mock(vec![
+        call("toolu_own", "Write", &json!({ "file_path": own, "content": "x" })),
+        call("toolu_other", "Write", &json!({ "file_path": other, "content": "x" })),
+        Reply::text("done"),
+    ])
+    .await;
+    let sdk =
+        builder(&mock, &dirs).permissions(Arc::clone(&gate) as Arc<dyn PermissionGate>).build().await.expect("sdk");
+    let (agent, _events) = sdk.spawn(AgentOptions::new(dirs.project()).id("a1").mcp(false)).await.expect("spawn");
+    agent.send_text("go").await.expect("alive").expect("turn");
+    settle(&agent).await;
+    assert_eq!(std::fs::read_to_string(&own).expect("written"), "x");
+    assert_eq!(gate.writes_of("Write"), [target(&own, true)], "its own scratch is inside");
+    assert!(!other.exists());
+    assert!(all_text(&mock.requests()[2]).contains("is in the agent engine's own files"));
 }
 
 #[tokio::test]

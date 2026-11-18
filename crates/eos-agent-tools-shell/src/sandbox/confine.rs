@@ -41,12 +41,13 @@ const ROOT_LINKS: &[&str] = &["/etc", "/var", "/tmp"];
 pub struct ConfineSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
-    /// Where the host starts it; readable.
+    /// Where the host starts it. Not made readable: a folder it reads is
+    /// one of `read_paths` or `write_paths`.
     pub cwd: PathBuf,
     /// The whole environment it sees: nothing of the host's is inherited.
     pub env: Vec<(String, String)>,
-    /// Readable besides the system's folders, the program, `cwd`, the
-    /// write paths and `tmpdir`.
+    /// Readable besides the system's folders, the program, the write paths
+    /// and `tmpdir`.
     pub read_paths: Vec<PathBuf>,
     /// Readable and writable.
     pub write_paths: Vec<PathBuf>,
@@ -197,9 +198,7 @@ impl From<io::Error> for ConfineError {
 /// The Seatbelt profile of `spec`: deny by default, read only the system's
 /// folders and the spec's paths, write only its write paths, no Keychain.
 pub(super) fn profile(spec: &ConfineSpec, log_tag: &str, proxy_port: Option<u16>) -> io::Result<String> {
-    let named =
-        [&[spec.program.clone(), spec.cwd.clone(), spec.tmpdir.clone()][..], &spec.read_paths, &spec.write_paths]
-            .concat();
+    let named = [&[spec.program.clone(), spec.tmpdir.clone()][..], &spec.read_paths, &spec.write_paths].concat();
     if let Some(bad) = named.iter().find(|p| !p.is_absolute() || !usable(p)) {
         return Err(invalid(format!(
             "not an absolute path a sandbox profile can hold: {:?}",
@@ -294,6 +293,8 @@ mod tests {
         assert!(allowed.contains("(subpath \"/calls/c1\")"), "the temp folder: {allowed}");
         assert!(allowed.contains("(subpath \"/var\")") && !allowed.contains("(subpath \"/private/var\")"), "{allowed}");
         assert!(!allowed.contains("/Users"), "{allowed}");
+        let home = profile(&ConfineSpec { cwd: "/Users/u".into(), ..spec() }, "T_SBX", None).expect("profile");
+        assert!(!home.contains("/Users"), "the working folder is not readable on its own: {home}");
     }
 
     #[test]

@@ -206,7 +206,8 @@ denied only when `violations` is empty, `more` is 0 and `watched` is true.
 
 The command reads the system's folders (`/bin`, `/sbin`, `/usr`, `/System`,
 `/Library`, `/opt/homebrew`, `/dev`, `/private/etc`, the time zones), the
-program, `cwd`, `read_paths`, `write_paths` and `tmpdir`; writes
+program, `read_paths`, `write_paths` and `tmpdir` (not `cwd` unless one of
+them holds it); writes
 `write_paths`, `tmpdir` and the standard devices; reaches `hosts` through
 the proxy (empty: no network), never loopback or a private network and
 without asking the gate; sends Apple Events to the `apple_events` bundle ids.

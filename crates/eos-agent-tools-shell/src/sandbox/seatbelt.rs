@@ -103,6 +103,9 @@ impl Seatbelt {
             allow_pty: false,
             enable_weaker_network_isolation: cfg.enable_weaker_network_isolation.unwrap_or(false),
             allow_apple_events: cfg.allow_apple_events.unwrap_or(false),
+            apple_event_targets: Vec::new(),
+            deny_keychain: false,
+            report_reads: false,
         };
         let all = spec.write_roots.iter().chain(&spec.write_files).chain(&spec.deny_read).chain(&spec.allow_read);
         if let Some(bad) = all.into_iter().find(|p| !usable(p)) {
@@ -116,7 +119,7 @@ impl Seatbelt {
 }
 
 /// Each path in both spellings, without duplicates.
-fn resolved(paths: &[PathBuf]) -> Vec<PathBuf> {
+pub(super) fn resolved(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::with_capacity(paths.len() * 2);
     for p in paths {
         for s in spellings(Path::new(p)) {

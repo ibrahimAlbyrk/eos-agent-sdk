@@ -6,7 +6,7 @@ use common::{Dirs, mock, settle};
 use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{BoxFuture, Credential, Permission, PermissionGate, StaticCredential, ToolCall};
 use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{AgentOptions, ReadOnly, SandboxConfig, Sdk};
+use eos_agent_sdk::{AgentOptions, ConfineSpec, Confined, ReadOnly, SandboxConfig, Sdk, Violation};
 use eos_agent_tools_shell::sandbox::Seatbelt;
 use serde_json::{Value, json};
 
@@ -247,4 +247,36 @@ async fn removals_are_judged_from_the_live_working_directory() {
         .collect();
     assert_eq!(asked, ["rm -rf .."], "`cd sub` is allowed; removing the working directory is asked");
     assert_eq!(gate.cwds.lock().expect("lock").clone(), [Some(sub)], "the gate sees the live directory");
+}
+
+#[tokio::test]
+async fn a_host_confines_a_command_of_its_own() {
+    let dirs = Dirs::new("sandbox-confine");
+    let api = mock([]).await;
+    let built = sdk(&api, &dirs, Arc::new(Recorder::default()), None).await;
+    if !built.sandbox_available() {
+        eprintln!("skipped: sandbox-exec is not available here");
+        return;
+    }
+    dirs.write("secret.txt", "TOP-SECRET");
+    let spec = ConfineSpec {
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), "cat ../secret.txt || echo refused".into()],
+        cwd: dirs.project(),
+        read_paths: vec![dirs.project()],
+        tmpdir: dirs.root.join("call"),
+        ..ConfineSpec::default()
+    };
+    let confined: Confined = built.confine(spec).await.expect("confined");
+    let out = tokio::process::Command::new(&confined.program)
+        .args(&confined.args)
+        .env_clear()
+        .envs(confined.env.clone())
+        .current_dir(dirs.project())
+        .output()
+        .await
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "refused\n");
+    let violations: Vec<Violation> = confined.guard.finish().await;
+    assert!(violations.contains(&Violation::FileRead { path: dirs.root.join("secret.txt") }), "{violations:?}");
 }

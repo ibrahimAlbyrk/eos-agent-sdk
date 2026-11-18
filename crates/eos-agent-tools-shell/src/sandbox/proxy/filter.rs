@@ -18,6 +18,9 @@ pub(crate) struct HostPolicy {
     pub allowed: Vec<String>,
     pub denied: Vec<String>,
     pub strict: bool,
+    /// Dial public addresses only: no loopback, no private network, even
+    /// for a listed address (a confined host command).
+    pub public_only: bool,
 }
 
 impl HostPolicy {
@@ -52,6 +55,12 @@ impl HostPolicy {
 
     /// `None` when the proxy may dial `addr` for `host`, else why not.
     pub(crate) fn guard(&self, host: &str, addr: IpAddr, port: u16, local: &[IpAddr]) -> Option<&'static str> {
+        if self.public_only {
+            let addr = unmap(addr);
+            return special(addr)
+                .or_else(|| private(addr))
+                .or_else(|| local.contains(&addr).then_some("one of this host's addresses"));
+        }
         if canonical(host).parse::<IpAddr>().is_ok() {
             return None; // An address asked for by name was judged as such.
         }
@@ -203,6 +212,15 @@ fn special(addr: IpAddr) -> Option<&'static str> {
     }
 }
 
+/// Addresses of private networks: the LAN, carrier-grade NAT, unique local IPv6.
+fn private(addr: IpAddr) -> Option<&'static str> {
+    let private = match addr {
+        IpAddr::V4(v4) => v4.is_private() || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64),
+        IpAddr::V6(v6) => v6.is_unique_local(),
+    };
+    private.then_some("a private network address")
+}
+
 /// One address or a CIDR range.
 #[derive(Debug, Clone, Copy)]
 struct Range {
@@ -263,7 +281,7 @@ mod tests {
         let policy = HostPolicy {
             allowed: vec!["*.example.com".into(), "bad.example.com".into()],
             denied: vec!["bad.example.com".into()],
-            strict: false,
+            ..HostPolicy::default()
         };
         assert_eq!(policy.judge("a.example.com", 443), Verdict::Allow);
         assert_eq!(policy.judge("bad.example.com", 443), Verdict::Deny("host is on the deny list"));
@@ -288,5 +306,25 @@ mod tests {
         assert_eq!(policy.guard("localhost", ip("8.8.8.8"), 80, &local), Some("a non-loopback address"));
         assert_eq!(policy.guard("127.0.0.1", ip("127.0.0.1"), 80, &local), None, "an address, judged as such");
         assert_eq!(policy.guard("good.com", ip("93.184.216.34"), 443, &local), None);
+    }
+
+    #[test]
+    fn a_public_only_guard_stops_loopback_and_private_networks_even_when_listed() {
+        let policy = HostPolicy {
+            allowed: vec!["localhost".into(), "127.0.0.1".into(), "10.0.0.0/8".into()],
+            public_only: true,
+            ..HostPolicy::default()
+        };
+        let ip = |s: &str| s.parse::<IpAddr>().expect("ip");
+        let local = [ip("203.0.113.9")];
+        assert_eq!(policy.guard("localhost", ip("127.0.0.1"), 80, &local), Some("a loopback address"));
+        assert_eq!(policy.guard("127.0.0.1", ip("127.0.0.1"), 80, &local), Some("a loopback address"));
+        assert_eq!(policy.guard("intra.com", ip("10.1.2.3"), 80, &local), Some("a private network address"));
+        for lan in ["192.168.1.30", "172.20.0.1", "100.64.0.1", "fd12::1", "::ffff:192.168.0.1"] {
+            assert_eq!(policy.guard("lan.com", ip(lan), 80, &local), Some("a private network address"), "{lan}");
+        }
+        assert_eq!(policy.guard("me.com", ip("203.0.113.9"), 80, &local), Some("one of this host's addresses"));
+        assert_eq!(policy.guard("good.com", ip("93.184.216.34"), 443, &local), None);
+        assert_eq!(policy.guard("good.com", ip("100.128.0.1"), 443, &local), None, "outside carrier-grade NAT");
     }
 }

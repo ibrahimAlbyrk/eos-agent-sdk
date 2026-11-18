@@ -183,3 +183,30 @@ error, and nobody is asked for a replacement.
 (name, description, argument hint, where it comes from, whether a user may
 type it and whether the model sees it), in Claude Code's order of
 precedence.
+
+## The host's own commands under the sandbox
+
+`Sdk::confine(ConfineSpec { program, args, cwd, env, read_paths,
+write_paths, hosts, apple_events, tmpdir, audit })` confines one command of
+the host's own (not an agent's shell call) with the agents' Seatbelt
+sandbox, on the process's one proxy and violation monitor, with none of
+Claude Code's sandbox settings. Every path is absolute. It returns
+`Confined { program, args, env, guard }`: the host starts `program` with
+`args` in `cwd` through its own process runner, with exactly `env` and
+nothing inherited (the spec's variables, with `TMPDIR` and the proxy's over
+them), holds `guard` while the child runs, and once it has exited
+`guard.finish()` gives what it was denied: file reads and writes with their
+paths, network targets, executed paths, Mach services and Apple Event
+targets, each once, at most 50.
+
+The command reads the system's folders (`/bin`, `/sbin`, `/usr`, `/System`,
+`/Library`, `/opt/homebrew`, `/dev`, `/private/etc`, the time zones), the
+program, `cwd`, `read_paths`, `write_paths` and `tmpdir`; writes
+`write_paths`, `tmpdir` and the standard devices; reaches `hosts` through
+the proxy (empty: no network), never loopback or a private network and
+without asking the gate; sends Apple Events to the `apple_events` bundle ids.
+It never runs `/usr/bin/security`, looks up the Keychain's daemons, listens
+on a port or opens apps and URLs. With `audit`, reads outside its paths are
+allowed and reported; everything else stays denied.
+`Sdk::sandbox_available()` says whether `sandbox-exec` works here; where it
+does not, `confine` fails with `ConfineError::Unavailable`.

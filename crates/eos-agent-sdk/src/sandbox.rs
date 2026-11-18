@@ -3,7 +3,7 @@
 //! `.claude/settings.json` and `.claude/settings.local.json`, the host's (in
 //! the place of Claude Code's `--settings`) and the managed settings, in
 //! Claude Code's precedence. Every agent shares the process's one proxy and
-//! violation monitor.
+//! violation monitor, and so do the commands a host confines.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,10 +12,12 @@ use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{
     BoxFuture, Extensions, PermissionGate, StoredMessage, Tool, ToolContext, ToolOutput, ToolReview, ToolSpec,
 };
-use eos_agent_tools_shell::sandbox::SandboxUnavailable;
+use eos_agent_tools_shell::sandbox::{ConfineError, ConfineSpec, Confined, SandboxUnavailable};
 use eos_agent_tools_shell::{SandboxConfig, SandboxDirs, SandboxLayers, SandboxPolicy, SandboxRuntime, sandbox_schema};
 use serde_json::Value;
 use serde_json::value::RawValue;
+
+use crate::Sdk;
 
 /// A directory's sandbox: `Ok(None)` when its settings leave it off (or it
 /// cannot run here), `Err` when it is required and cannot run.
@@ -74,6 +76,22 @@ impl Sandboxes {
             managed: self.managed.clone().map(|c| c.rebased(cwd)),
         };
         self.runtime.policy(layers.effective())
+    }
+}
+
+impl Sdk {
+    /// Whether the OS sandbox works on this machine: asked once per process,
+    /// blocking the first time. Without it, [`Sdk::confine`] refuses.
+    pub fn sandbox_available(&self) -> bool {
+        self.services.sandboxes.runtime.available()
+    }
+
+    /// Confines one command of the host's own (not an agent's shell call)
+    /// to what `spec` names, for the host to start with its own process
+    /// runner; [`ConfineGuard::finish`](eos_agent_tools_shell::sandbox::ConfineGuard::finish)
+    /// reports what it was denied once it has exited.
+    pub async fn confine(&self, spec: ConfineSpec) -> Result<Confined, ConfineError> {
+        self.services.sandboxes.runtime.confine(spec).await
     }
 }
 

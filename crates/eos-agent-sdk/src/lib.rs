@@ -12,8 +12,9 @@
 //! ([`AgentOptions::tools`], [`AgentOptions::extensions`]), choose its MCP
 //! servers, tool search, summarizing and instruction files per agent, decide
 //! every tool call ([`SdkBuilder::permissions`]), change a live agent
-//! ([`SdkAgent::set_model`], [`SdkAgent::rewind`], [`Sdk::stop_task`]) and
-//! ask a model once outside any conversation ([`Sdk::complete`]); see
+//! ([`SdkAgent::set_model`], [`SdkAgent::rewind`], [`Sdk::stop_task`]),
+//! ask a model once outside any conversation ([`Sdk::complete`]) and run a
+//! command of its own under the agents' sandbox ([`Sdk::confine`]); see
 //! `docs/host-api.md`.
 //!
 //! Per process: one API client (one connection pool), the engine, the shell
@@ -74,7 +75,8 @@ pub use eos_agent_openai::models::DEFAULT_CONTEXT_WINDOW as OPENAI_CONTEXT_WINDO
 pub use eos_agent_openai::{Catalog as OpenAiCatalog, ChatGptLogin, ModelInfo as OpenAiModel, ToolPlacement};
 pub use eos_agent_skills::Origin as SkillOrigin;
 pub use eos_agent_tools_shell::sandbox::{
-    FilesystemConfig, NETWORK_TOOL, NetworkConfig, SandboxConfig, SandboxUnavailable,
+    ConfineError, ConfineGuard, ConfineSpec, Confined, FilesystemConfig, NETWORK_TOOL, NetworkConfig, SandboxConfig,
+    SandboxUnavailable, Violation,
 };
 pub use gate::ReadOnly;
 pub use host::HostTool;

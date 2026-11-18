@@ -212,6 +212,9 @@ the proxy (empty: no network), never loopback or a private network and
 without asking the gate; sends Apple Events to the `apple_events` bundle ids.
 It never runs `/usr/bin/security`, looks up the Keychain's daemons, listens
 on a port or opens apps and URLs. With `audit`, reads outside its paths are
-allowed and reported; everything else stays denied.
+allowed and reported; since it may then read every file the user can, it
+reaches no host and sends no Apple Event, whatever `hosts` and
+`apple_events` name, and those attempts are reported too. Everything else
+stays denied.
 `Sdk::sandbox_available()` says whether `sandbox-exec` works here; where it
 does not, `confine` fails with `ConfineError::Unavailable`.

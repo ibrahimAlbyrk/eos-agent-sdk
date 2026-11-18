@@ -101,7 +101,7 @@ impl SandboxRuntime {
         tokio::fs::create_dir_all(&spec.tmpdir).await?;
         let watched = self.violations.ensure_monitor().await;
         let watch = self.violations.watch_confined(&cmd_id, spec.audit);
-        let lease = proxy.map(|proxy| proxy.register(confine::owner(&cmd_id, &spec.hosts)));
+        let lease = proxy.map(|proxy| proxy.register(confine::owner(&cmd_id, &spec)));
         let sandbox_env = command_env(&spec.tmpdir, proxy.map(Proxy::port).zip(lease.as_ref()), true);
         let mut args = vec!["-p".to_owned(), profile, spec.program.to_string_lossy().into_owned()];
         args.extend(spec.args);

@@ -465,12 +465,19 @@ async fn an_audit_lets_reads_through_and_reports_them() {
     let Some(runtime) = confining_runtime() else { return };
     let dirs = HostDirs::new();
     let outside = dirs.base.join("outside.txt");
-    let script = format!("cat ../secret.txt; echo x > {} || echo no-outside", outside.display());
-    let confined = runtime.confine(ConfineSpec { audit: true, ..dirs.spec(&script) }).await.expect("confined");
+    let curl = "curl -fsS --max-time 5 --noproxy '' -o /dev/null";
+    let script = format!(
+        "cat ../secret.txt; echo x > {outside} || echo no-outside; {curl} http://listed.invalid/ || echo no-host",
+        outside = outside.display()
+    );
+    // What it read must not leave, not even to a host the spec names.
+    let spec = ConfineSpec { audit: true, hosts: vec!["listed.invalid".into()], ..dirs.spec(&script) };
+    let confined = runtime.confine(spec).await.expect("confined");
     let out = run_confined(&confined, &dirs.base.join("pkg")).await;
     let violations = confined.guard.finish().await.violations;
-    assert!(out.contains("TOP-SECRET") && out.contains("no-outside"), "{out}");
+    assert!(out.contains("TOP-SECRET") && out.contains("no-outside") && out.contains("no-host"), "{out}");
     assert!(!outside.exists());
     assert!(violations.contains(&Violation::FileRead { path: dirs.real.join("secret.txt") }), "{violations:?}");
     assert!(violations.contains(&Violation::FileWrite { path: dirs.real.join("outside.txt") }), "{violations:?}");
+    assert!(violations.contains(&Violation::Network { target: "listed.invalid:80".into() }), "{violations:?}");
 }

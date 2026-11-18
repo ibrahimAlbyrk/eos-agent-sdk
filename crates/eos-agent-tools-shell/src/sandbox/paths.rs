@@ -7,25 +7,18 @@ use super::SandboxConfig;
 use super::profile::{Rule, regex_escape};
 pub(crate) use super::protect::Protected;
 
+/// The devices every sandboxed command may write (sandbox-runtime's `NI`).
+pub(crate) const WRITABLE_DEVICES: [&str; 6] =
+    ["/dev/stdout", "/dev/stderr", "/dev/null", "/dev/tty", "/dev/dtracehelper", "/dev/autofs_nowait"];
+
 /// Writable for every sandboxed command (sandbox-runtime's `NI`, as `RI`
 /// filters it): its fixed devices and folders, and the home folder's
 /// `.npm/_logs` and `.claude/debug` unless a `denyRead` entry covers them
 /// (and no `allowRead` path inside that entry holds them again) or a
 /// `deny` credential file does.
 pub(crate) fn default_writable(config: &SandboxConfig, cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = [
-        "/dev/stdout",
-        "/dev/stderr",
-        "/dev/null",
-        "/dev/tty",
-        "/dev/dtracehelper",
-        "/dev/autofs_nowait",
-        "/tmp/claude",
-        "/private/tmp/claude",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .collect();
+    let mut out: Vec<PathBuf> =
+        WRITABLE_DEVICES.iter().chain(&["/tmp/claude", "/private/tmp/claude"]).map(PathBuf::from).collect();
     let Some(home) = home else { return out };
     let fs = &config.filesystem;
     let deny: Vec<Matcher> = fs.deny_read.iter().flatten().filter_map(|e| Matcher::new(e, cwd, Some(home))).collect();

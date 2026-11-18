@@ -1,5 +1,6 @@
 //! Sandbox violations: one shared `log stream` child reads the kernel's
-//! "Sandbox: … deny" lines and routes them to the command whose tag ends the
+//! "Sandbox: … deny" lines (and, for a command that asks, the "allow" lines
+//! of rules that report) and routes them to the command whose tag ends the
 //! line; the proxy adds the connections it refused. A command's lines come
 //! back as Claude Code's `<sandbox_violations>` block.
 
@@ -35,6 +36,8 @@ struct Collector {
     command: String,
     /// The agent's `ignoreViolations`.
     ignore: Arc<BTreeMap<String, Vec<String>>>,
+    /// Takes the kernel's reports of what it allowed but would have denied.
+    reports: bool,
     lines: Vec<String>,
     more: usize,
 }
@@ -82,23 +85,29 @@ impl Violations {
     }
 
     /// Collects `cmd_id`'s violations, minus those its agent's `ignore`
-    /// names, until the returned watch is finished.
+    /// names, until the returned watch is finished; with `reports`, also
+    /// what its profile allowed but asked to hear about.
     pub(crate) fn watch(
         self: &Arc<Self>,
         cmd_id: &str,
         command: &str,
         ignore: Arc<BTreeMap<String, Vec<String>>>,
+        reports: bool,
     ) -> Watch {
-        let collector = Collector { command: command.to_owned(), ignore, ..Collector::default() };
+        let collector = Collector { command: command.to_owned(), ignore, reports, ..Collector::default() };
         lock(&self.by_cmd).insert(cmd_id.to_owned(), collector);
         Watch { violations: Arc::clone(self), cmd_id: cmd_id.to_owned() }
     }
 
     /// Adds a line for a command that is being watched.
     pub(crate) fn record(&self, cmd_id: &str, line: &str) {
+        self.add(cmd_id, line, false);
+    }
+
+    fn add(&self, cmd_id: &str, line: &str, report: bool) {
         let mut map = lock(&self.by_cmd);
         let Some(c) = map.get_mut(cmd_id) else { return };
-        if ignored(&c.ignore, line, &c.command) || c.lines.iter().any(|l| l == line) {
+        if (report && !c.reports) || ignored(&c.ignore, line, &c.command) || c.lines.iter().any(|l| l == line) {
             return;
         }
         if c.lines.len() < MAX_LINES {
@@ -114,8 +123,11 @@ impl Violations {
         let Some(message) = event.get("eventMessage").and_then(|m| m.as_str()) else { return };
         let Some((text, tag)) = message.rsplit_once('\n') else { return };
         let Some(cmd) = self.cmd_of(tag) else { return };
-        let Some(line) = parse_line(text) else { return };
-        self.record(cmd, line);
+        if let Some(line) = parse_line(text) {
+            self.record(cmd, line);
+        } else if let Some(line) = parse_report(text) {
+            self.add(cmd, line, true);
+        }
     }
 }
 
@@ -124,6 +136,13 @@ impl Violations {
 fn parse_line(text: &str) -> Option<&str> {
     let line = text.trim().strip_prefix("Sandbox:")?.trim();
     (line.contains("deny") && !NOISE.iter().any(|n| line.contains(n))).then_some(line)
+}
+
+/// `cat(123) allow file-read-data /x` from a rule that allows and reports
+/// (`with report`), unless it is noise.
+fn parse_report(text: &str) -> Option<&str> {
+    let line = text.trim().strip_prefix("Sandbox:")?.trim();
+    (line.split_whitespace().nth(1) == Some("allow") && !NOISE.iter().any(|n| line.contains(n))).then_some(line)
 }
 
 /// Claude Code's `ignoreViolations`: `"*"` paths are ignored for every
@@ -229,8 +248,8 @@ mod tests {
     async fn routes_kernel_lines_by_tag() {
         let ignore = BTreeMap::from([("*".to_owned(), vec!["/ignored".to_owned()])]);
         let v = Violations::new();
-        let watch = v.watch("c1", "touch /x", Arc::new(ignore));
-        let other = v.watch("c2", "ls", Arc::default());
+        let watch = v.watch("c1", "touch /x", Arc::new(ignore), false);
+        let other = v.watch("c2", "ls", Arc::default(), false);
         let tag = v.tag("c1");
         let event = |msg: String| serde_json::json!({"eventMessage": msg}).to_string();
         v.route(&event(format!("Sandbox: touch(9) deny(1) file-write-create /x\n{tag}")));
@@ -239,6 +258,7 @@ mod tests {
         v.route(&event(format!("Sandbox: mDNSResponder(1) deny(1) network\n{tag}")));
         v.route(&event("Sandbox: touch(9) deny(1) file-write-create /z\nEOS_c1_otherproc_SBX".into()));
         v.record("c1", "deny network-outbound evil.com:443 (host is not on the allow list)");
+        v.route(&event(format!("Sandbox: cat(9) allow file-read-data /etc/passwd\n{tag}")));
         assert_eq!(
             watch.finish(true).await,
             [
@@ -247,6 +267,21 @@ mod tests {
             ]
         );
         assert!(other.finish(false).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reports_reach_only_the_commands_that_ask_for_them() {
+        let v = Violations::new();
+        let audit = v.watch("c1", "cat", Arc::default(), true);
+        let event = |msg: String| serde_json::json!({"eventMessage": msg}).to_string();
+        v.route(&event(format!("Sandbox: cat(9) allow file-read-data /Users/u/.ssh/id\n{}", v.tag("c1"))));
+        v.route(&event(format!("Sandbox: cat(9) deny(1) file-write-create /x\n{}", v.tag("c1"))));
+        v.route(&event(format!("Sandbox: cat(9) allow mach-lookup com.apple.diagnosticd\n{}", v.tag("c1"))));
+        v.route(&event(format!("1 duplicate report for Sandbox: cat(9) allow file-read-data /y\n{}", v.tag("c1"))));
+        assert_eq!(
+            audit.finish(false).await,
+            ["cat(9) allow file-read-data /Users/u/.ssh/id", "cat(9) deny(1) file-write-create /x"]
+        );
     }
 
     #[test]
@@ -274,7 +309,7 @@ mod tests {
     #[test]
     fn caps_and_renders_the_block() {
         let v = Violations::new();
-        let watch = v.watch("c", "x", Arc::default());
+        let watch = v.watch("c", "x", Arc::default(), false);
         for i in 0..53 {
             v.record("c", &format!("line {i}"));
         }

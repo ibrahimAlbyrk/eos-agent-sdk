@@ -5,9 +5,11 @@
 //!
 //! One [`SandboxRuntime`] per process holds what commands share; each agent
 //! gets a [`SandboxPolicy`] from the settings of its own working directory
-//! ([`SandboxLayers`]) and carries it as an [`AgentSandbox`].
+//! ([`SandboxLayers`]) and carries it as an [`AgentSandbox`]. A host confines
+//! a command of its own with [`SandboxRuntime::confine`].
 
 mod config;
+mod confine;
 mod credentials;
 mod decide;
 mod env;
@@ -30,6 +32,7 @@ pub use config::{
     AwsPair, CredentialEnv, CredentialFile, CredentialMode, CredentialsConfig, Decode, FilesystemConfig, NetworkConfig,
     OnExtractNoMatch, SandboxConfig, Sigv4Policies, Sigv4Policy, TlsTerminateConfig,
 };
+pub use confine::{ConfineError, ConfineGuard, ConfineSpec, Confined, Violation};
 pub use decide::{needs_permission_anyway, should_sandbox};
 pub use layers::SandboxLayers;
 pub use proxy::NETWORK_TOOL;

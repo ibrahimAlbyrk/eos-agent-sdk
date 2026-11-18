@@ -3,13 +3,15 @@
 
 mod common;
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{Harness, alive, output, pid_from, task_id, text, wait_until};
 use eos_agent_core::{BoxFuture, CancellationToken, Permission, PermissionGate, ToolCall};
-use eos_agent_tools_shell::sandbox_schema;
+use eos_agent_tools_shell::sandbox::{ConfineSpec, Confined, Violation};
+use eos_agent_tools_shell::{SandboxDirs, SandboxRuntime, sandbox_schema};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -337,4 +339,120 @@ async fn mean_of_50(h: &Harness) -> Duration {
         assert!(!h.call("Bash", json!({"command": "true"})).await.is_error);
     }
     start.elapsed() / 50
+}
+
+/// A host's own folders for a confined command: a package with a `data`
+/// folder, and a secret beside it.
+struct HostDirs {
+    base: PathBuf,
+    /// `base` as the kernel names it (through `/var` -> `/private/var`).
+    real: PathBuf,
+}
+
+impl HostDirs {
+    fn new() -> Self {
+        let base = std::env::temp_dir().join(format!("eos-confine-test-{}", fastrand::u64(..)));
+        std::fs::create_dir_all(base.join("pkg/data")).expect("dirs");
+        std::fs::write(base.join("pkg/readme"), "PKG-FILE").expect("readme");
+        std::fs::write(base.join("secret.txt"), "TOP-SECRET").expect("secret");
+        let real = std::fs::canonicalize(&base).expect("real");
+        Self { base, real }
+    }
+
+    fn spec(&self, script: &str) -> ConfineSpec {
+        ConfineSpec {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            cwd: self.base.join("pkg"),
+            env: vec![("GREETING".into(), "hi".into()), ("PATH".into(), "/usr/bin:/bin".into())],
+            read_paths: vec![self.base.join("pkg")],
+            write_paths: vec![self.base.join("pkg/data")],
+            tmpdir: self.base.join("call"),
+            ..ConfineSpec::default()
+        }
+    }
+}
+
+impl Drop for HostDirs {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
+}
+
+fn confining_runtime() -> Option<Arc<SandboxRuntime>> {
+    let runtime = SandboxRuntime::new(SandboxDirs::from_env(), Arc::new(Gate::default()));
+    if !runtime.available() {
+        eprintln!("skipped: sandbox-exec is not available here");
+        return None;
+    }
+    Some(runtime)
+}
+
+/// Starts it as a host does: its own process, exactly the confined environment.
+async fn run_confined(confined: &Confined, cwd: &Path) -> String {
+    let out = tokio::process::Command::new(&confined.program)
+        .args(&confined.args)
+        .env_clear()
+        .envs(confined.env.clone())
+        .current_dir(cwd)
+        .output()
+        .await
+        .expect("spawn");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[tokio::test]
+async fn a_confined_host_command_touches_only_what_it_was_given() {
+    let Some(runtime) = confining_runtime() else { return };
+    let dirs = HostDirs::new();
+    let port = upstream().await;
+    let outside = dirs.base.join("outside.txt");
+    let curl = "curl -fsS --max-time 5 --noproxy '' -o /dev/null";
+    let script = format!(
+        "cat readme; echo; cat ../secret.txt || echo no-secret; echo made > data/made.txt && echo wrote; \
+         echo x > {outside} || echo no-outside; /usr/bin/security list-keychains || echo no-security; \
+         {curl} http://blocked.invalid/ || echo no-host; {curl} http://localhost:{port}/ || echo no-loopback; env",
+        outside = outside.display()
+    );
+    let spec = ConfineSpec { hosts: vec!["localhost".into()], ..dirs.spec(&script) };
+    let confined = runtime.confine(spec).await.expect("confined");
+    assert_eq!(confined.program, Path::new("/usr/bin/sandbox-exec"));
+    let out = run_confined(&confined, &dirs.base.join("pkg")).await;
+    let violations = confined.guard.finish().await;
+
+    for line in ["PKG-FILE", "no-secret", "wrote", "no-outside", "no-security", "no-host", "no-loopback"] {
+        assert!(out.contains(line), "{line}: {out}");
+    }
+    assert!(!out.contains("TOP-SECRET"), "{out}");
+    assert_eq!(std::fs::read_to_string(dirs.base.join("pkg/data/made.txt")).expect("made"), "made\n");
+    assert!(!outside.exists());
+    // Its environment is the spec's and the sandbox's, nothing of the host's.
+    assert!(out.contains("GREETING=hi\n") && out.contains("HTTP_PROXY=http://eos.") && !out.contains("HOME="), "{out}");
+    assert!(out.contains(&format!("TMPDIR={}\n", dirs.base.join("call").display())), "{out}");
+
+    let expected = [
+        Violation::FileRead { path: dirs.real.join("secret.txt") },
+        Violation::FileWrite { path: dirs.real.join("outside.txt") },
+        Violation::Exec { path: "/usr/bin/security".into() },
+        Violation::Network { target: "blocked.invalid:80".into() },
+        Violation::Network { target: format!("localhost:{port}") },
+    ];
+    for v in &expected {
+        assert!(violations.contains(v), "{v:?} in {violations:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_audit_lets_reads_through_and_reports_them() {
+    let Some(runtime) = confining_runtime() else { return };
+    let dirs = HostDirs::new();
+    let outside = dirs.base.join("outside.txt");
+    let script = format!("cat ../secret.txt; echo x > {} || echo no-outside", outside.display());
+    let confined = runtime.confine(ConfineSpec { audit: true, ..dirs.spec(&script) }).await.expect("confined");
+    let out = run_confined(&confined, &dirs.base.join("pkg")).await;
+    let violations = confined.guard.finish().await;
+    assert!(out.contains("TOP-SECRET") && out.contains("no-outside"), "{out}");
+    assert!(!outside.exists());
+    assert!(violations.contains(&Violation::FileRead { path: dirs.real.join("secret.txt") }), "{violations:?}");
+    assert!(violations.contains(&Violation::FileWrite { path: dirs.real.join("outside.txt") }), "{violations:?}");
 }

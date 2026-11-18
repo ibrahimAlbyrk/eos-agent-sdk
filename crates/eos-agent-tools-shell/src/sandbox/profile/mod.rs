@@ -91,7 +91,22 @@ pub(crate) struct ProfileSpec {
     pub allow_pty: bool,
     pub enable_weaker_network_isolation: bool,
     pub allow_apple_events: bool,
+    /// Apple Events only to these bundle ids (a confined host command).
+    pub apple_event_targets: Vec<String>,
+    /// No `/usr/bin/security` and no Mach lookup of the Keychain's daemons,
+    /// whatever the base allows (a confined host command).
+    pub deny_keychain: bool,
+    /// Reads outside `allow_read` are allowed but logged as the denials they
+    /// would be (a confined host command's audit run).
+    pub report_reads: bool,
 }
+
+/// The Mach services that serve the Keychain: `securityd` and `secd`.
+const KEYCHAIN_SERVICES: &[&str] = &[
+    "(global-name \"com.apple.SecurityServer\")",
+    "(global-name-prefix \"com.apple.securityd\")",
+    "(global-name-prefix \"com.apple.security.\")",
+];
 
 /// SBPL strings are JSON strings (Claude Code uses `JSON.stringify`).
 pub(crate) fn quote(s: &str) -> String {
@@ -129,6 +144,13 @@ impl ProfileSpec {
         if self.allow_apple_events {
             p += APPLE_EVENTS;
         }
+        if !self.apple_event_targets.is_empty() {
+            p += "; Apple Events to the named apps only\n";
+            let targets: Vec<String> =
+                self.apple_event_targets.iter().map(|t| format!("(appleevent-destination {})", quote(t))).collect();
+            block(&mut p, "allow", &["appleevent-send"], &targets, tag);
+            p += "(allow mach-lookup (global-name \"com.apple.coreservices.appleevents\"))\n";
+        }
         if !self.allow_mach_lookup.is_empty() {
             p += "; User-specified XPC/Mach services\n";
             for name in &self.allow_mach_lookup {
@@ -150,6 +172,12 @@ impl ProfileSpec {
         self.file_write(&mut p);
         if self.allow_pty {
             p += PTY;
+        }
+        if self.deny_keychain {
+            p += "\n; Keychain\n";
+            block(&mut p, "deny", &["process-exec"], &["(literal \"/usr/bin/security\")".to_owned()], tag);
+            let services: Vec<String> = KEYCHAIN_SERVICES.iter().map(|s| (*s).to_owned()).collect();
+            block(&mut p, "deny", &["mach-lookup"], &services, tag);
         }
         p
     }
@@ -193,7 +221,11 @@ impl ProfileSpec {
         }
         let tag = &self.log_tag;
         let denies: Vec<String> = self.deny_read_rules().iter().map(Rule::sbpl).collect();
-        block(p, "deny", &["file-read*"], &denies, tag);
+        if self.report_reads {
+            reported(p, &["file-read*"], &denies, tag);
+        } else {
+            block(p, "deny", &["file-read*"], &denies, tag);
+        }
         let own: Vec<String> = self.own_allow_read.iter().map(|a| Rule::Subpath(a.clone()).sbpl()).collect();
         let allows: Vec<String> = self
             .allow_read
@@ -260,6 +292,15 @@ fn dedup(items: impl Iterator<Item = String>) -> Vec<String> {
 /// `(<verb> <ops>\n  <filter>…\n  (with message "<tag>"))`, nothing when empty
 /// (Claude Code's `ao`).
 fn block(p: &mut String, verb: &str, ops: &[&str], filters: &[String], tag: &str) {
+    rule(p, verb, ops, filters, "", tag);
+}
+
+/// As [`block`], but allowed and logged as the denial it would be.
+fn reported(p: &mut String, ops: &[&str], filters: &[String], tag: &str) {
+    rule(p, "allow", ops, filters, "(with report) ", tag);
+}
+
+fn rule(p: &mut String, verb: &str, ops: &[&str], filters: &[String], modifier: &str, tag: &str) {
     if filters.is_empty() {
         return;
     }
@@ -267,7 +308,7 @@ fn block(p: &mut String, verb: &str, ops: &[&str], filters: &[String], tag: &str
     for f in filters {
         let _ = writeln!(p, "  {f}");
     }
-    let _ = writeln!(p, "  (with message \"{tag}\"))");
+    let _ = writeln!(p, "  {modifier}(with message \"{tag}\"))");
 }
 
 #[cfg(test)]

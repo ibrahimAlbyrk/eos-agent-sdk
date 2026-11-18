@@ -11,11 +11,13 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use eos_agent_core::PermissionGate;
 use tokio::sync::OnceCell;
 
+use super::confine::{self, ConfineError, ConfineGuard, ConfineSpec, Confined};
 use super::credentials::{self, Vault};
 use super::env::command_env;
 use super::proxy::filter::HostPolicy;
 use super::proxy::tls::ca::Ca;
 use super::proxy::{Lease, Owner, Proxy};
+use super::seatbelt::SANDBOX_EXEC;
 use super::violations::{Violations, Watch};
 use super::{
     Sandbox, SandboxConfig, SandboxDirs, SandboxRequest, SandboxUnavailable, Seatbelt, TlsTerminateConfig, Wrapped,
@@ -80,6 +82,37 @@ impl SandboxRuntime {
         &self.dirs
     }
 
+    /// Can the OS sandbox run here? Asked once per process (blocking, the
+    /// first time).
+    pub fn available(&self) -> bool {
+        *self.available.get_or_init(self.probe)
+    }
+
+    /// Confines one host command to `spec`, on the shared proxy and
+    /// violation monitor. Fails closed: `Unavailable` when the OS sandbox
+    /// cannot run here. Blocking the first time (see [`Self::available`]).
+    pub async fn confine(&self, spec: ConfineSpec) -> Result<Confined, ConfineError> {
+        if !self.available() {
+            return Err(ConfineError::Unavailable);
+        }
+        let cmd_id = new_cmd_id();
+        let proxy = self.proxy().await;
+        let profile = confine::profile(&spec, &self.violations.tag(&cmd_id), proxy.map(Proxy::port))?;
+        tokio::fs::create_dir_all(&spec.tmpdir).await?;
+        let _ = self.violations.ensure_monitor().await;
+        let watch = self.violations.watch(&cmd_id, &spec.program.to_string_lossy(), Arc::default(), spec.audit);
+        let lease = proxy.map(|proxy| proxy.register(confine::owner(&cmd_id, &spec.hosts)));
+        let sandbox_env = command_env(&spec.tmpdir, proxy.map(Proxy::port).zip(lease.as_ref()), true);
+        let mut args = vec!["-p".to_owned(), profile, spec.program.to_string_lossy().into_owned()];
+        args.extend(spec.args);
+        Ok(Confined {
+            program: PathBuf::from(SANDBOX_EXEC),
+            args,
+            env: confine::environment(spec.env, sandbox_env),
+            guard: ConfineGuard(SandboxGuard { watch, lease }),
+        })
+    }
+
     /// The sandbox an agent with these (effective) settings runs under:
     /// `None` when they leave it off, or on but unavailable here (a warning
     /// is logged and commands run unsandboxed, as in Claude Code);
@@ -92,7 +125,7 @@ impl SandboxRuntime {
         for key in config.unsupported_keys() {
             tracing::warn!("{key} is not supported by this engine's sandbox and is ignored");
         }
-        if !*self.available.get_or_init(self.probe) {
+        if !self.available() {
             if config.fail_if_unavailable() {
                 return Err(SandboxUnavailable);
             }
@@ -117,6 +150,7 @@ impl SandboxRuntime {
             allowed: config.allowed_domains().to_vec(),
             denied: config.denied_domains().to_vec(),
             strict: config.strict_allowlist(),
+            public_only: false,
         });
         let ignore = Arc::new(config.ignore_violations.clone().unwrap_or_default());
         if let Some(text) = config
@@ -242,7 +276,7 @@ impl SandboxPolicy {
         tokio::fs::create_dir_all(p.tmpdir).await?;
         let _ = runtime.violations.ensure_monitor().await;
         let cmd_id = new_cmd_id();
-        let watch = runtime.violations.watch(&cmd_id, p.command, Arc::clone(&self.ignore));
+        let watch = runtime.violations.watch(&cmd_id, p.command, Arc::clone(&self.ignore), false);
         let proxy = runtime.proxy().await;
         let lease = proxy.map(|proxy| {
             proxy.register(Owner {

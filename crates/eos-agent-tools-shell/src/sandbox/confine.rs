@@ -52,14 +52,17 @@ pub struct ConfineSpec {
     pub write_paths: Vec<PathBuf>,
     /// Host names the proxy lets it reach (`*.example.com` for subdomains);
     /// empty: no network. Loopback and private networks are never reached.
+    /// Ignored in an audit.
     pub hosts: Vec<String>,
-    /// Bundle ids it may send Apple Events to.
+    /// Bundle ids it may send Apple Events to. Ignored in an audit.
     pub apple_events: Vec<String>,
     /// Its `TMPDIR`: made if missing, readable and writable.
     pub tmpdir: PathBuf,
     /// Reads outside its paths are allowed and reported as violations, so
-    /// one run shows all of them; writes, network, Apple Events and the
-    /// Keychain stay denied.
+    /// one run shows all of them. Since it may then read every file the
+    /// user can, nothing may leave: every connection and Apple Event is
+    /// denied and reported, whatever `hosts` and `apple_events` name.
+    /// Writes and the Keychain stay denied.
     pub audit: bool,
 }
 
@@ -218,7 +221,7 @@ pub(super) fn profile(spec: &ConfineSpec, log_tag: &str, proxy_port: Option<u16>
         write_roots,
         deny_read: vec![PathBuf::from("/")],
         allow_read,
-        apple_event_targets: spec.apple_events.clone(),
+        apple_event_targets: if spec.audit { Vec::new() } else { spec.apple_events.clone() },
         deny_keychain: true,
         report_reads: spec.audit,
         ..ProfileSpec::default()
@@ -226,10 +229,11 @@ pub(super) fn profile(spec: &ConfineSpec, log_tag: &str, proxy_port: Option<u16>
     Ok(profile.render())
 }
 
-/// The proxy's owner for a confined command: only its hosts, never asked
-/// about others, public addresses only.
-pub(super) fn owner(cmd_id: &str, hosts: &[String]) -> Owner {
-    let hosts = HostPolicy { allowed: hosts.to_vec(), strict: true, public_only: true, ..HostPolicy::default() };
+/// The proxy's owner for a confined command: only its hosts (none in an
+/// audit), never asked about others, public addresses only.
+pub(super) fn owner(cmd_id: &str, spec: &ConfineSpec) -> Owner {
+    let allowed = if spec.audit { Vec::new() } else { spec.hosts.clone() };
+    let hosts = HostPolicy { allowed, strict: true, public_only: true, ..HostPolicy::default() };
     Owner {
         agent_id: String::new(),
         session: cmd_id.to_owned(),
@@ -330,6 +334,7 @@ mod tests {
         assert!(!text.contains("(deny file-read*"), "{text}");
         assert!(text.contains("(deny file-write-unlink file-write-create\n  (subpath \"/\")\n"), "{text}");
         assert!(text.starts_with("(version 1)\n(deny default (with message \"T_SBX\"))"));
+        assert!(!text.contains("appleevent"), "it may read anything, so it sends no Apple Event: {text}");
     }
 
     #[test]
@@ -385,11 +390,13 @@ mod tests {
     #[test]
     fn owners_judge_only_their_hosts() {
         use super::super::proxy::filter::Verdict;
-        let listed = owner("c1", &["api.example.com".into()]);
+        let listed = owner("c1", &spec());
         assert_eq!(listed.hosts.judge("api.example.com", 443), Verdict::Allow);
         assert_eq!(listed.hosts.judge("other.com", 443), Verdict::Deny("host is not on the allow list"));
-        let none = owner("c2", &[]);
+        let none = owner("c2", &ConfineSpec { hosts: Vec::new(), ..spec() });
         assert_eq!(none.hosts.judge("api.example.com", 443), Verdict::Deny("host is not on the allow list"));
+        let audit = owner("c3", &ConfineSpec { audit: true, ..spec() });
+        assert_eq!(audit.hosts.judge("api.example.com", 443), Verdict::Deny("host is not on the allow list"));
     }
 
     #[test]

@@ -13,7 +13,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Notify, OnceCell};
 
-/// Lines kept per command; the rest are counted.
+use super::confine::Violation;
+
+/// Lines (or a confined command's violations) kept per command; the rest
+/// are counted.
 const MAX_LINES: usize = 50;
 /// How long after a failed command exits we wait for its lines (they were
 /// measured to arrive before the exit; this covers a busy `logd`). The whole
@@ -36,9 +39,15 @@ struct Collector {
     command: String,
     /// The agent's `ignoreViolations`.
     ignore: Arc<BTreeMap<String, Vec<String>>>,
+    /// A host's confined command: its lines are kept as the violations
+    /// they name, in `found`.
+    confined: bool,
     /// Takes the kernel's reports of what it allowed but would have denied.
     reports: bool,
     lines: Vec<String>,
+    /// Each once; a line that names none (sysctl, IOKit …) is neither kept
+    /// nor counted, so the system's own denials never crowd one out.
+    found: Vec<Violation>,
     more: usize,
 }
 
@@ -85,16 +94,24 @@ impl Violations {
     }
 
     /// Collects `cmd_id`'s violations, minus those its agent's `ignore`
-    /// names, until the returned watch is finished; with `reports`, also
-    /// what its profile allowed but asked to hear about.
+    /// names, until the returned watch is finished.
     pub(crate) fn watch(
         self: &Arc<Self>,
         cmd_id: &str,
         command: &str,
         ignore: Arc<BTreeMap<String, Vec<String>>>,
-        reports: bool,
     ) -> Watch {
-        let collector = Collector { command: command.to_owned(), ignore, reports, ..Collector::default() };
+        self.insert(cmd_id, Collector { command: command.to_owned(), ignore, ..Collector::default() })
+    }
+
+    /// Collects a host's confined command's violations until the returned
+    /// watch is finished; in an `audit`, also what its profile allowed but
+    /// asked to hear about.
+    pub(crate) fn watch_confined(self: &Arc<Self>, cmd_id: &str, audit: bool) -> Watch {
+        self.insert(cmd_id, Collector { confined: true, reports: audit, ..Collector::default() })
+    }
+
+    fn insert(self: &Arc<Self>, cmd_id: &str, collector: Collector) -> Watch {
         lock(&self.by_cmd).insert(cmd_id.to_owned(), collector);
         Watch { violations: Arc::clone(self), cmd_id: cmd_id.to_owned() }
     }
@@ -107,12 +124,16 @@ impl Violations {
     fn add(&self, cmd_id: &str, line: &str, report: bool) {
         let mut map = lock(&self.by_cmd);
         let Some(c) = map.get_mut(cmd_id) else { return };
-        if (report && !c.reports) || ignored(&c.ignore, line, &c.command) || c.lines.iter().any(|l| l == line) {
+        if (report && !c.reports) || ignored(&c.ignore, line, &c.command) {
             return;
         }
-        if c.lines.len() < MAX_LINES {
-            c.lines.push(line.to_owned());
+        let kept = if c.confined {
+            let Some(violation) = Violation::parse(line) else { return };
+            keep_once(&mut c.found, violation)
         } else {
+            keep_once(&mut c.lines, line.to_owned())
+        };
+        if !kept {
             c.more += 1;
         }
     }
@@ -142,7 +163,33 @@ fn parse_line(text: &str) -> Option<&str> {
 /// (`with report`), unless it is noise.
 fn parse_report(text: &str) -> Option<&str> {
     let line = text.trim().strip_prefix("Sandbox:")?.trim();
-    (line.split_whitespace().nth(1) == Some("allow") && !NOISE.iter().any(|n| line.contains(n))).then_some(line)
+    (verdict(line)?.0 == "allow" && !NOISE.iter().any(|n| line.contains(n))).then_some(line)
+}
+
+/// The line's verdict word (`deny(1)`, `deny`, `allow`) and the text after
+/// it, in the kernel's `Google Chrome(9) deny(1) file-read-data /x` and the
+/// proxy's `deny network-outbound host:443 (why)`.
+pub(super) fn verdict(line: &str) -> Option<(&str, &str)> {
+    let mut at = 0;
+    for word in line.split(' ') {
+        at += word.len() + 1;
+        if word == "allow" || word == "deny" || word.starts_with("deny(") {
+            return Some((word, line.get(at..)?));
+        }
+    }
+    None
+}
+
+/// Adds `item` unless it is there; false when the list is full without it.
+fn keep_once<T: PartialEq>(items: &mut Vec<T>, item: T) -> bool {
+    if items.contains(&item) {
+        return true;
+    }
+    if items.len() >= MAX_LINES {
+        return false;
+    }
+    items.push(item);
+    true
 }
 
 /// Claude Code's `ignoreViolations`: `"*"` paths are ignored for every
@@ -203,16 +250,27 @@ impl Watch {
     /// The command's lines. After a failure the late ones get a moment to
     /// arrive; a success takes what has arrived (as Claude Code does).
     pub(crate) async fn finish(self, failed: bool) -> Vec<String> {
-        if failed {
-            tokio::time::sleep(GRACE).await;
-        }
-        tokio::task::yield_now().await; // lines already read but not yet routed
-        let c = lock(&self.violations.by_cmd).remove(&self.cmd_id).unwrap_or_default();
+        let c = self.take(failed).await;
         let mut lines = c.lines;
         if c.more > 0 {
             lines.push(format!("… and {} more", c.more));
         }
         lines
+    }
+
+    /// A confined command's violations and how many more there were. Its
+    /// exit status is the host's, so the late lines always get their moment.
+    pub(crate) async fn finish_confined(self) -> (Vec<Violation>, usize) {
+        let c = self.take(true).await;
+        (c.found, c.more)
+    }
+
+    async fn take(self, failed: bool) -> Collector {
+        if failed {
+            tokio::time::sleep(GRACE).await;
+        }
+        tokio::task::yield_now().await; // lines already read but not yet routed
+        lock(&self.violations.by_cmd).remove(&self.cmd_id).unwrap_or_default()
     }
 }
 
@@ -248,8 +306,8 @@ mod tests {
     async fn routes_kernel_lines_by_tag() {
         let ignore = BTreeMap::from([("*".to_owned(), vec!["/ignored".to_owned()])]);
         let v = Violations::new();
-        let watch = v.watch("c1", "touch /x", Arc::new(ignore), false);
-        let other = v.watch("c2", "ls", Arc::default(), false);
+        let watch = v.watch("c1", "touch /x", Arc::new(ignore));
+        let other = v.watch("c2", "ls", Arc::default());
         let tag = v.tag("c1");
         let event = |msg: String| serde_json::json!({"eventMessage": msg}).to_string();
         v.route(&event(format!("Sandbox: touch(9) deny(1) file-write-create /x\n{tag}")));
@@ -272,16 +330,49 @@ mod tests {
     #[tokio::test]
     async fn reports_reach_only_the_commands_that_ask_for_them() {
         let v = Violations::new();
-        let audit = v.watch("c1", "cat", Arc::default(), true);
+        let audit = v.watch_confined("c1", true);
+        let plain = v.watch_confined("c2", false);
         let event = |msg: String| serde_json::json!({"eventMessage": msg}).to_string();
-        v.route(&event(format!("Sandbox: cat(9) allow file-read-data /Users/u/.ssh/id\n{}", v.tag("c1"))));
-        v.route(&event(format!("Sandbox: cat(9) deny(1) file-write-create /x\n{}", v.tag("c1"))));
-        v.route(&event(format!("Sandbox: cat(9) allow mach-lookup com.apple.diagnosticd\n{}", v.tag("c1"))));
-        v.route(&event(format!("1 duplicate report for Sandbox: cat(9) allow file-read-data /y\n{}", v.tag("c1"))));
+        for cmd in ["c1", "c2"] {
+            let tag = v.tag(cmd);
+            v.route(&event(format!("Sandbox: cat(9) allow file-read-data /Users/u/.ssh/id\n{tag}")));
+            v.route(&event(format!("Sandbox: Google Chrome(9) allow file-read-data /Users/u/.aws\n{tag}")));
+            v.route(&event(format!("Sandbox: cat(9) deny(1) file-write-create /x\n{tag}")));
+            v.route(&event(format!("Sandbox: cat(9) allow mach-lookup com.apple.diagnosticd\n{tag}")));
+            v.route(&event(format!("1 duplicate report for Sandbox: cat(9) allow file-read-data /y\n{tag}")));
+        }
+        let read = |p: &str| Violation::FileRead { path: p.into() };
+        let wrote = Violation::FileWrite { path: "/x".into() };
         assert_eq!(
-            audit.finish(false).await,
-            ["cat(9) allow file-read-data /Users/u/.ssh/id", "cat(9) deny(1) file-write-create /x"]
+            audit.finish_confined().await,
+            (vec![read("/Users/u/.ssh/id"), read("/Users/u/.aws"), wrote.clone()], 0)
         );
+        assert_eq!(plain.finish_confined().await, (vec![wrote], 0));
+    }
+
+    #[tokio::test]
+    async fn a_confined_command_counts_only_what_it_reports_each_once() {
+        let v = Violations::new();
+        let watch = v.watch_confined("c", false);
+        let tag = v.tag("c");
+        let event = |msg: String| serde_json::json!({"eventMessage": msg}).to_string();
+        for pid in 0..100 {
+            v.route(&event(format!("Sandbox: sh({pid}) deny(1) sysctl-read kern.iossupportversion\n{tag}")));
+            v.route(&event(format!("Sandbox: sh({pid}) deny(1) system-info vfs.disk-space\n{tag}")));
+            v.route(&event(format!("Sandbox: sh({pid}) deny(1) file-read-metadata /Users\n{tag}")));
+            v.route(&event(format!("Sandbox: sh({pid}) deny(1) file-read-data /Users\n{tag}")));
+        }
+        v.route(&event(format!("Sandbox: cat(7) deny(1) file-read-data /Users/u/secret\n{tag}")));
+        let (found, more) = watch.finish_confined().await;
+        let read = |p: &str| Violation::FileRead { path: p.into() };
+        assert_eq!((found, more), (vec![read("/Users"), read("/Users/u/secret")], 0));
+
+        let full = v.watch_confined("d", false);
+        for i in 0..53 {
+            v.record("d", &format!("deny network-outbound host{i}.com:443 (host is not on the allow list)"));
+        }
+        let (found, more) = full.finish_confined().await;
+        assert_eq!((found.len(), more), (50, 3));
     }
 
     #[test]
@@ -309,7 +400,7 @@ mod tests {
     #[test]
     fn caps_and_renders_the_block() {
         let v = Violations::new();
-        let watch = v.watch("c", "x", Arc::default(), false);
+        let watch = v.watch("c", "x", Arc::default());
         for i in 0..53 {
             v.record("c", &format!("line {i}"));
         }

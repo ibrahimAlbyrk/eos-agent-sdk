@@ -32,7 +32,7 @@ pub use config::{
     AwsPair, CredentialEnv, CredentialFile, CredentialMode, CredentialsConfig, Decode, FilesystemConfig, NetworkConfig,
     OnExtractNoMatch, SandboxConfig, Sigv4Policies, Sigv4Policy, TlsTerminateConfig,
 };
-pub use confine::{ConfineError, ConfineGuard, ConfineSpec, Confined, Violation};
+pub use confine::{ConfineError, ConfineGuard, ConfineReport, ConfineSpec, Confined, Violation};
 pub use decide::{needs_permission_anyway, should_sandbox};
 pub use layers::SandboxLayers;
 pub use proxy::NETWORK_TOOL;

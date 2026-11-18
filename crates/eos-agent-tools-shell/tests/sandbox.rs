@@ -418,7 +418,9 @@ async fn a_confined_host_command_touches_only_what_it_was_given() {
     let confined = runtime.confine(spec).await.expect("confined");
     assert_eq!(confined.program, Path::new("/usr/bin/sandbox-exec"));
     let out = run_confined(&confined, &dirs.base.join("pkg")).await;
-    let violations = confined.guard.finish().await;
+    let report = confined.guard.finish().await;
+    assert!(report.watched, "{report:?}");
+    let violations = report.violations;
 
     for line in ["PKG-FILE", "no-secret", "wrote", "no-outside", "no-security", "no-host", "no-loopback"] {
         assert!(out.contains(line), "{line}: {out}");
@@ -443,6 +445,22 @@ async fn a_confined_host_command_touches_only_what_it_was_given() {
 }
 
 #[tokio::test]
+async fn many_processes_do_not_crowd_out_a_denial() {
+    let Some(runtime) = confining_runtime() else { return };
+    let dirs = HostDirs::new();
+    // Every process draws the system's own denials (sysctl, system-info),
+    // each line with its own pid.
+    let script = "for i in $(seq 60); do /usr/bin/true; done; cat ../secret.txt || echo no-secret";
+    let confined = runtime.confine(dirs.spec(script)).await.expect("confined");
+    let out = run_confined(&confined, &dirs.base.join("pkg")).await;
+    let report = confined.guard.finish().await;
+    assert!(out.contains("no-secret"), "{out}");
+    let secret = Violation::FileRead { path: dirs.real.join("secret.txt") };
+    assert!(report.violations.contains(&secret), "{report:?}");
+    assert!(report.violations.len() < 10 && report.more == 0, "each once: {report:?}");
+}
+
+#[tokio::test]
 async fn an_audit_lets_reads_through_and_reports_them() {
     let Some(runtime) = confining_runtime() else { return };
     let dirs = HostDirs::new();
@@ -450,7 +468,7 @@ async fn an_audit_lets_reads_through_and_reports_them() {
     let script = format!("cat ../secret.txt; echo x > {} || echo no-outside", outside.display());
     let confined = runtime.confine(ConfineSpec { audit: true, ..dirs.spec(&script) }).await.expect("confined");
     let out = run_confined(&confined, &dirs.base.join("pkg")).await;
-    let violations = confined.guard.finish().await;
+    let violations = confined.guard.finish().await.violations;
     assert!(out.contains("TOP-SECRET") && out.contains("no-outside"), "{out}");
     assert!(!outside.exists());
     assert!(violations.contains(&Violation::FileRead { path: dirs.real.join("secret.txt") }), "{violations:?}");

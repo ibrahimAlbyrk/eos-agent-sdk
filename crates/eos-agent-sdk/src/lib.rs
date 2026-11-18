@@ -75,8 +75,8 @@ pub use eos_agent_openai::models::DEFAULT_CONTEXT_WINDOW as OPENAI_CONTEXT_WINDO
 pub use eos_agent_openai::{Catalog as OpenAiCatalog, ChatGptLogin, ModelInfo as OpenAiModel, ToolPlacement};
 pub use eos_agent_skills::Origin as SkillOrigin;
 pub use eos_agent_tools_shell::sandbox::{
-    ConfineError, ConfineGuard, ConfineSpec, Confined, FilesystemConfig, NETWORK_TOOL, NetworkConfig, SandboxConfig,
-    SandboxUnavailable, Violation,
+    ConfineError, ConfineGuard, ConfineReport, ConfineSpec, Confined, FilesystemConfig, NETWORK_TOOL, NetworkConfig,
+    SandboxConfig, SandboxUnavailable, Violation,
 };
 pub use gate::ReadOnly;
 pub use host::HostTool;

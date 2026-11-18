@@ -6,7 +6,7 @@ use common::{Dirs, mock, settle};
 use eos_agent_compat::ClaudePaths;
 use eos_agent_core::{BoxFuture, Credential, Permission, PermissionGate, StaticCredential, ToolCall};
 use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{AgentOptions, ConfineSpec, Confined, ReadOnly, SandboxConfig, Sdk, Violation};
+use eos_agent_sdk::{AgentOptions, ConfineReport, ConfineSpec, Confined, ReadOnly, SandboxConfig, Sdk, Violation};
 use eos_agent_tools_shell::sandbox::Seatbelt;
 use serde_json::{Value, json};
 
@@ -277,6 +277,6 @@ async fn a_host_confines_a_command_of_its_own() {
         .await
         .expect("spawn");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "refused\n");
-    let violations: Vec<Violation> = confined.guard.finish().await;
-    assert!(violations.contains(&Violation::FileRead { path: dirs.root.join("secret.txt") }), "{violations:?}");
+    let report: ConfineReport = confined.guard.finish().await;
+    assert!(report.violations.contains(&Violation::FileRead { path: dirs.root.join("secret.txt") }), "{report:?}");
 }

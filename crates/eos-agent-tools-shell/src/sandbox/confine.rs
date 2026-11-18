@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use super::paths::WRITABLE_DEVICES;
 use super::profile::{ProfileSpec, usable};
-use super::proxy::Owner;
 use super::proxy::filter::HostPolicy;
-use super::runtime::SandboxGuard;
+use super::proxy::{Lease, Owner};
 use super::seatbelt::resolved;
+use super::violations::{Watch, verdict};
 
 /// Readable by every confined command: the system's programs, libraries,
 /// devices, settings and time zones, never a user's files.
@@ -79,14 +79,36 @@ pub struct Confined {
 
 /// Keeps the command's proxy credentials valid and collects its violations.
 #[derive(Debug)]
-pub struct ConfineGuard(pub(super) SandboxGuard);
+pub struct ConfineGuard {
+    pub(super) watch: Watch,
+    pub(super) lease: Option<Lease>,
+    /// Whether the shared `log stream` reads the OS sandbox's lines.
+    pub(super) watched: bool,
+}
 
 impl ConfineGuard {
-    /// What the command was denied or, in an audit, read outside its paths:
-    /// each once, at most 50. Its proxy credentials end here.
-    pub async fn finish(self) -> Vec<Violation> {
-        self.0.finish(true).await.iter().filter_map(|line| Violation::parse(line)).collect()
+    /// What the command was denied or, in an audit, read outside its paths.
+    /// Its proxy credentials end here.
+    pub async fn finish(self) -> ConfineReport {
+        let Self { watch, lease, watched } = self;
+        drop(lease);
+        let (violations, more) = watch.finish_confined().await;
+        ConfineReport { violations, more, watched }
     }
+}
+
+/// What a confined command was denied or, in an audit, read outside its
+/// paths. It was denied nothing only when `violations` is empty, `more` is
+/// 0 and `watched` is true.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfineReport {
+    /// Each once, at most 50, in the order they came.
+    pub violations: Vec<Violation>,
+    /// How many more there were.
+    pub more: usize,
+    /// Whether the OS sandbox's own lines were read. When `log stream`
+    /// could not start, `violations` holds only the proxy's refusals.
+    pub watched: bool,
 }
 
 /// One thing a confined command was denied (or, in an audit, read).
@@ -119,8 +141,8 @@ pub enum Violation {
 impl Violation {
     /// From the kernel's `cat(9) deny(1) file-read-data /x` (`allow` in an
     /// audit) or the proxy's `deny network-outbound host:443 (why)`.
-    fn parse(line: &str) -> Option<Self> {
-        let (operation, target) = after_verdict(line)?.split_once(' ')?;
+    pub(super) fn parse(line: &str) -> Option<Self> {
+        let (operation, target) = verdict(line)?.1.split_once(' ')?;
         let path = || PathBuf::from(target);
         Some(match operation {
             op if op.starts_with("file-read") => Self::FileRead { path: path() },
@@ -134,18 +156,6 @@ impl Violation {
             _ => return None,
         })
     }
-}
-
-/// The text after the line's verdict word (`deny(1)`, `deny`, `allow`).
-fn after_verdict(line: &str) -> Option<&str> {
-    let mut at = 0;
-    for word in line.split(' ') {
-        at += word.len() + 1;
-        if word == "allow" || word == "deny" || word.starts_with("deny(") {
-            return line.get(at..);
-        }
-    }
-    None
 }
 
 /// Why a command could not be confined.

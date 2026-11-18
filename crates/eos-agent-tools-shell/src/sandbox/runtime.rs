@@ -99,8 +99,8 @@ impl SandboxRuntime {
         let proxy = self.proxy().await;
         let profile = confine::profile(&spec, &self.violations.tag(&cmd_id), proxy.map(Proxy::port))?;
         tokio::fs::create_dir_all(&spec.tmpdir).await?;
-        let _ = self.violations.ensure_monitor().await;
-        let watch = self.violations.watch(&cmd_id, &spec.program.to_string_lossy(), Arc::default(), spec.audit);
+        let watched = self.violations.ensure_monitor().await;
+        let watch = self.violations.watch_confined(&cmd_id, spec.audit);
         let lease = proxy.map(|proxy| proxy.register(confine::owner(&cmd_id, &spec.hosts)));
         let sandbox_env = command_env(&spec.tmpdir, proxy.map(Proxy::port).zip(lease.as_ref()), true);
         let mut args = vec!["-p".to_owned(), profile, spec.program.to_string_lossy().into_owned()];
@@ -109,7 +109,7 @@ impl SandboxRuntime {
             program: PathBuf::from(SANDBOX_EXEC),
             args,
             env: confine::environment(spec.env, sandbox_env),
-            guard: ConfineGuard(SandboxGuard { watch, lease }),
+            guard: ConfineGuard { watch, lease, watched },
         })
     }
 
@@ -276,7 +276,7 @@ impl SandboxPolicy {
         tokio::fs::create_dir_all(p.tmpdir).await?;
         let _ = runtime.violations.ensure_monitor().await;
         let cmd_id = new_cmd_id();
-        let watch = runtime.violations.watch(&cmd_id, p.command, Arc::clone(&self.ignore), false);
+        let watch = runtime.violations.watch(&cmd_id, p.command, Arc::clone(&self.ignore));
         let proxy = runtime.proxy().await;
         let lease = proxy.map(|proxy| {
             proxy.register(Owner {

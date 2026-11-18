@@ -194,9 +194,14 @@ Claude Code's sandbox settings. Every path is absolute. It returns
 `args` in `cwd` through its own process runner, with exactly `env` and
 nothing inherited (the spec's variables, with `TMPDIR` and the proxy's over
 them), holds `guard` while the child runs, and once it has exited
-`guard.finish()` gives what it was denied: file reads and writes with their
-paths, network targets, executed paths, Mach services and Apple Event
-targets, each once, at most 50.
+`guard.finish()` gives a `ConfineReport`: in `violations`, what it was
+denied (file reads and writes with their paths, network targets, executed
+paths, Mach services and Apple Event targets), each once, at most 50, and
+in `more` how many more there were. The system's own denials that name none
+of these (sysctl, IOKit …) are neither listed nor counted. `watched` is
+false when the OS sandbox's lines could not be read (`log stream` did not
+start); `violations` then holds only the proxy's refusals. Nothing was
+denied only when `violations` is empty, `more` is 0 and `watched` is true.
 
 The command reads the system's folders (`/bin`, `/sbin`, `/usr`, `/System`,
 `/Library`, `/opt/homebrew`, `/dev`, `/private/etc`, the time zones), the

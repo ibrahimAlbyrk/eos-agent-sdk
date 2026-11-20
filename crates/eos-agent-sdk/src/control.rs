@@ -25,6 +25,13 @@ pub enum ControlError {
     /// The conversation did not fit the new model and could not be summarized first.
     #[error("the conversation could not be summarized for the new model: {0}")]
     Compact(TurnError),
+    /// The conversation does not fit the new model and the change said not
+    /// to summarize it ([`TooLong::Refuse`]): nothing changed.
+    #[error("the conversation (about {held} tokens) does not fit the new model ({fits} tokens)")]
+    TooLong { held: u64, fits: u64 },
+    /// The summary the new model needed was stopped: nothing changed.
+    #[error("the summary for the new model was stopped; the model was not changed")]
+    NotSummarized,
     #[error(transparent)]
     Rewind(#[from] RewindError),
     #[error("could not read the conversation: {0}")]
@@ -51,12 +58,32 @@ pub struct ModelChange {
     pub auth: Option<Arc<dyn TokenSource>>,
     /// When the conversation is summarized from now on (`None`: as it is).
     pub compaction: Option<AutoCompact>,
+    /// The new model's context window in tokens, when the host knows it
+    /// (a model newer than the SDK's table; `None`: as it is).
+    pub context_window: Option<u64>,
+    /// What a conversation too long for the new model gets.
+    pub too_long: TooLong,
 }
 
 impl std::fmt::Debug for ModelChange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ModelChange").field("compaction", &self.compaction).finish_non_exhaustive()
+        f.debug_struct("ModelChange")
+            .field("compaction", &self.compaction)
+            .field("context_window", &self.context_window)
+            .field("too_long", &self.too_long)
+            .finish_non_exhaustive()
     }
+}
+
+/// What a model change does with a conversation too long for the new model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TooLong {
+    /// Summarizes it first, by the model it is on.
+    #[default]
+    Summarize,
+    /// Changes nothing and fails with [`ControlError::TooLong`], so the host
+    /// can ask its user first.
+    Refuse,
 }
 
 /// Why a background task was not stopped.
@@ -114,15 +141,20 @@ impl SdkAgent {
     /// without the reasoning of the others (which only they can read), and
     /// each gets its own back whenever the agent returns to it. A
     /// conversation too long for the new model is summarized first, by the
-    /// model it is on. True when it was.
+    /// model it is on, or refused, as [`ModelChange::too_long`] says. True
+    /// when it was summarized. A summary that was stopped changes nothing.
     pub async fn set_model_with(&self, model: &str, change: ModelChange) -> Result<bool, ControlError> {
         let services = &self.services;
         let blueprint = self.blueprint()?;
         let model = services.resolve_model(model);
-        let asked = match change.compaction {
-            Some(compaction) => Arc::new(blueprint.asked.with_compaction(compaction)),
-            None => Arc::clone(&blueprint.asked),
+        let mut asked = match change.compaction {
+            Some(compaction) => blueprint.asked.with_compaction(compaction),
+            None => (*blueprint.asked).clone(),
         };
+        if change.context_window.is_some() {
+            asked.context_window = change.context_window;
+        }
+        let asked = Arc::new(asked);
         let effort = blueprint.session_effort.as_deref();
         let ModelSetup { mut config, system, recipe, context_window } = model_setup(
             services,
@@ -146,7 +178,15 @@ impl SdkAgent {
         };
         let fits = config.compaction.as_ref().and_then(|c| c.threshold_tokens).unwrap_or(context_window);
         let held: u64 = self.transcript().await?.iter().map(StoredMessage::estimated_tokens).sum();
-        let summarized = held >= fits && self.handle.compact(None).await?.map_err(ControlError::Compact)?;
+        let summarized = held >= fits;
+        if summarized {
+            if change.too_long == TooLong::Refuse {
+                return Err(ControlError::TooLong { held, fits });
+            }
+            if !self.handle.compact(None).await?.map_err(ControlError::Compact)? {
+                return Err(ControlError::NotSummarized);
+            }
+        }
         let toolbox = match &blueprint.mcp_tools {
             Some(updates) => updates.set_recipe(recipe),
             None => blueprint.project.toolbox(&recipe, Vec::new()),

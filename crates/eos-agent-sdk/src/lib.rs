@@ -59,7 +59,7 @@ pub use agent::{CommandInfo, InputError, SdkAgent};
 pub use auth::{Account, AuthFailover, AuthFailure, AuthSource};
 pub use child::{SubagentEnded, SubagentEvent, SubagentEventKind, SubagentStarted};
 pub use complete::{CompleteError, CompleteRequest, Completion};
-pub use control::{AutoCompact, ControlError, ModelChange, StopTaskError, StoppedTask};
+pub use control::{AutoCompact, ControlError, ModelChange, StopTaskError, StoppedTask, TooLong};
 pub use decorate::{Deferred, SpillOver, result_limit};
 pub use eos_agent_agents::SpawnLimits;
 pub use eos_agent_artifacts::{ArtifactAuth, ArtifactOpener, FrameConfig, OpenReason, OpenRequest, WatchConfig};

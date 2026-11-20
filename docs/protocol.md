@@ -244,7 +244,8 @@ wording for that model, within what the agent was spawned with. A model on
 another provider moves the conversation there: it is kept as written, each
 provider gets it without the others' reasoning and its own back when the
 agent returns, and one too long for the new model is summarized first (a
-provider without a credential: -32602). `effort: null` goes back to the
+provider without a credential: -32602; a summary that was stopped leaves the
+model as it was and fails as a turn does). `effort: null` goes back to the
 model's default; leaving `effort` out keeps it. A client that spawns the
 agent again with `resume` passes the model itself.
 

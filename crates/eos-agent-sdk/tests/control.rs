@@ -14,7 +14,9 @@ use eos_agent_core::{
 };
 use eos_agent_engine::JsonlStore;
 use eos_agent_mock_api::{MockApi, Reply};
-use eos_agent_sdk::{Account, AgentOptions, ControlError, HostTool, Provider, SdkError, StopTaskError};
+use eos_agent_sdk::{
+    Account, AgentOptions, ControlError, HostTool, ModelChange, Provider, SdkError, StopTaskError, TooLong,
+};
 use serde_json::value::RawValue;
 
 #[tokio::test]
@@ -54,6 +56,49 @@ async fn a_model_change_holds_for_later_turns_and_new_subagents() {
     let other = agent.set_model("gpt-5").await.expect_err("a provider with no credential here");
     assert!(matches!(other, ControlError::Sdk(SdkError::NoProvider { provider: Provider::OpenAi, .. })), "{other:?}");
     assert_eq!(agent.model().as_deref(), Some("claude-haiku-5-5"));
+}
+
+#[tokio::test]
+async fn a_conversation_too_long_for_the_new_model_is_refused_or_summarized_and_a_stopped_summary_changes_nothing() {
+    let dirs = Dirs::new("ctl-model-too-long");
+    let mock = mock([
+        Reply::text("one"),
+        Reply::text("a summary never finished").slowed(Duration::from_secs(10)),
+        Reply::text("the summary"),
+        Reply::text("two"),
+    ])
+    .await;
+    let sdk = sdk_with_model(&mock, &dirs, "claude-opus-5-5").await;
+    let (agent, _events) =
+        sdk.spawn(AgentOptions::new(dirs.project()).mcp(false).auto_compact(false)).await.expect("spawn");
+    agent.send_text("first").await.expect("alive").expect("turn");
+    // The host knows the new model's window: far smaller than the conversation.
+    let small = || ModelChange { context_window: Some(10), ..ModelChange::default() };
+
+    let refused = agent
+        .set_model_with("haiku", ModelChange { too_long: TooLong::Refuse, ..small() })
+        .await
+        .expect_err("too long, and not to be summarized");
+    assert!(matches!(refused, ControlError::TooLong { fits: 10, .. }), "{refused:?}");
+    assert_eq!(agent.model().as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(mock.requests().len(), 1, "nothing was summarized");
+
+    let stop = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        agent.interrupt();
+    };
+    let (stopped, ()) = tokio::join!(agent.set_model_with("haiku", small()), stop);
+    assert!(matches!(stopped, Err(ControlError::NotSummarized)), "{stopped:?}");
+    assert_eq!(agent.model().as_deref(), Some("claude-opus-5-5"), "a stopped summary leaves the model");
+
+    assert!(agent.set_model_with("haiku", small()).await.expect("summarized, then changed"));
+    assert_eq!(agent.model().as_deref(), Some("claude-haiku-5-5"));
+    agent.send_text("second").await.expect("alive").expect("turn");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[2].json()["model"], "claude-opus-5-5", "the model it is on writes the summary");
+    assert_eq!(requests[3].json()["model"], "claude-haiku-5-5");
+    assert!(all_text(&requests[3]).contains("the summary"), "the new model goes on from the summary");
 }
 
 #[tokio::test]

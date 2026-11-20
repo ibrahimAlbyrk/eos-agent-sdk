@@ -115,6 +115,9 @@ pub struct ChatConfig {
     pub key_header: Option<String>,
     /// Sent with every request.
     pub headers: Vec<(String, String)>,
+    /// The header a request's conversation id goes in, for a server that
+    /// routes by it (`None`: none is sent).
+    pub session_header: Option<String>,
     pub compat: Compat,
     pub user_agent: String,
     /// A stream that sends nothing for this long is treated as dead.
@@ -130,6 +133,7 @@ impl ChatConfig {
             chat_path: CHAT_PATH.into(),
             key_header: None,
             headers: Vec::new(),
+            session_header: None,
             compat: Compat::default(),
             user_agent: concat!("eos-agent/", env!("CARGO_PKG_VERSION")).into(),
             idle_timeout: Duration::from_secs(300),
@@ -219,13 +223,21 @@ impl ChatClient {
         let url = format!("{}{}", self.config.base_url, self.config.chat_path);
         let auth = RequestAuth::choose(request.auth.as_ref(), &self.config.provider, &self.auth);
         let mut cred = auth.credential().await?;
+        // A request of no conversation (a title, a summary) is one of its own.
+        let session = self.config.session_header.as_deref().map(|header| {
+            let id = request.cache_key.as_deref().map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
+            (header, id)
+        });
         let mut renewed = false;
         loop {
-            let req = self
+            let mut req = self
                 .authorized(self.http.post(&url), &cred)
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .body(body.clone());
+            if let Some((header, id)) = &session {
+                req = req.header(*header, id);
+            }
             let res = self.send(req).await?;
             let status = res.status().as_u16();
             if status == 200 {

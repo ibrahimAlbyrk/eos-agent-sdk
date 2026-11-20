@@ -21,6 +21,7 @@ fn provider(mock: &MockApi) -> ProviderConfig {
         auth: Arc::new(StaticCredential(Credential::ApiKey("k-deep".into()))),
         key_header: None,
         headers: vec![("x-title".into(), "Eos".into())],
+        session_header: Some("x-session".into()),
         compat: ChatCompat { replay_reasoning: true, ..ChatCompat::default() },
         wire: Wire::Chat,
         context_window: Some(64_000),
@@ -51,6 +52,9 @@ async fn an_agent_on_a_configured_provider_runs_a_tool_turn() {
     let header = |name: &str| sent[0].headers.get(name).and_then(|v| v.to_str().ok());
     assert_eq!(header("authorization"), Some("Bearer k-deep"));
     assert_eq!(header("x-title"), Some("Eos"));
+    let session = header("x-session").expect("the session header");
+    assert_eq!(session, agent.id(), "the agent's id");
+    assert_eq!(sent[1].headers.get("x-session").and_then(|v| v.to_str().ok()), Some(session));
     let first = sent[0].json();
     assert_eq!(first["model"], "chat-1", "the provider gets the model as it names it");
     assert_eq!(first["max_tokens"], 4_000);
@@ -161,6 +165,7 @@ async fn a_provider_on_the_responses_api_runs_with_its_key() {
         auth: Arc::new(StaticCredential(Credential::ApiKey("k-oa".into()))),
         key_header: None,
         headers: Vec::new(),
+        session_header: None,
         compat: ChatCompat {
             efforts: vec![ModelEffort::new("gpt-", Effort::Levels(vec!["low".into(), "medium".into(), "high".into()]))],
             ..ChatCompat::default()

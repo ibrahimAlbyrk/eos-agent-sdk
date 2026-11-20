@@ -41,6 +41,9 @@ pub struct ProviderConfig {
     pub key_header: Option<String>,
     /// Sent with every request.
     pub headers: Vec<(String, String)>,
+    /// The header an agent's id goes in with its chat requests, for a server
+    /// that routes by conversation (`None`: none is sent).
+    pub session_header: Option<String>,
     pub compat: Compat,
     /// Its models' context window and longest reply, in tokens (`None`: a modest default).
     pub context_window: Option<u64>,
@@ -120,6 +123,7 @@ impl Providers {
                 chat.chat_path = config.chat_path.unwrap_or(chat.chat_path);
                 chat.key_header = config.key_header;
                 chat.headers = config.headers;
+                chat.session_header = config.session_header;
                 chat.compat = config.compat.clone();
                 Client::Chat(Arc::new(ChatClient::new(Arc::clone(&config.auth), chat)?))
             }
